@@ -15,6 +15,7 @@ import net.chumbucket.sorekillteams.command.TeamChatCommand;
 import net.chumbucket.sorekillteams.command.TeamCommand;
 import net.chumbucket.sorekillteams.listener.FriendlyFireListener;
 import net.chumbucket.sorekillteams.listener.TeamChatListener;
+import net.chumbucket.sorekillteams.model.TeamInvites;
 import net.chumbucket.sorekillteams.service.SimpleTeamService;
 import net.chumbucket.sorekillteams.service.TeamService;
 import net.chumbucket.sorekillteams.storage.TeamStorage;
@@ -22,6 +23,7 @@ import net.chumbucket.sorekillteams.storage.YamlTeamStorage;
 import net.chumbucket.sorekillteams.update.UpdateChecker;
 import net.chumbucket.sorekillteams.update.UpdateNotifyListener;
 import net.chumbucket.sorekillteams.util.Msg;
+import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.PluginCommand;
 import org.bukkit.plugin.java.JavaPlugin;
 
@@ -33,7 +35,14 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     private TeamStorage storage;
     private TeamService teams;
 
+    // 1.0.3: invite store (in-memory). Used by services/commands.
+    private final TeamInvites invites = new TeamInvites();
+
     private UpdateChecker updateChecker;
+    private UpdateNotifyListener updateNotifyListener;
+
+    private int invitePurgeTaskId = -1;
+    private int autosaveTaskId = -1;
 
     @Override
     public void onEnable() {
@@ -65,20 +74,25 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         getServer().getPluginManager().registerEvents(new FriendlyFireListener(this), this);
         getServer().getPluginManager().registerEvents(new TeamChatListener(this), this);
 
+        // Housekeeping tasks
+        startInvitePurgeTask();
+        startAutosaveTask();
+
         // Update checker (config togglable)
-        if (getConfig().getBoolean("updates.enabled", true)) {
-            this.updateChecker = new UpdateChecker(this);
-            getServer().getPluginManager().registerEvents(new UpdateNotifyListener(this, updateChecker), this);
-            updateChecker.checkNowAsync();
-        } else {
-            this.updateChecker = null;
-        }
+        syncUpdateCheckerWithConfig();
 
         getLogger().info("SorekillTeams enabled.");
     }
 
     @Override
     public void onDisable() {
+        // Cancel tasks (Bukkit also cancels on disable, but this keeps ids clean)
+        stopTask(invitePurgeTaskId);
+        invitePurgeTaskId = -1;
+
+        stopTask(autosaveTaskId);
+        autosaveTaskId = -1;
+
         try {
             if (storage != null && teams != null) {
                 storage.saveAll(teams);
@@ -86,6 +100,7 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         } catch (Exception e) {
             getLogger().severe("Failed to save teams: " + e.getClass().getSimpleName() + ": " + e.getMessage());
         }
+
         getLogger().info("SorekillTeams disabled.");
     }
 
@@ -117,22 +132,23 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             getLogger().severe("Reason: " + e.getClass().getSimpleName() + ": " + e.getMessage());
         }
 
-        // re-check updates after reload (if enabled)
-        if (getConfig().getBoolean("updates.enabled", true) && updateChecker != null) {
-            updateChecker.checkNowAsync();
-        }
+        // Restart configurable tasks (in case user changed values)
+        startInvitePurgeTask();
+        startAutosaveTask();
+
+        // Apply updates toggle on reload too
+        syncUpdateCheckerWithConfig();
 
         getLogger().info("SorekillTeams reloaded.");
     }
 
-    private void registerCommand(String name, Object executor) {
+    private void registerCommand(String name, CommandExecutor executor) {
         final PluginCommand cmd = getCommand(name);
         if (cmd == null) {
             getLogger().warning("Command '/" + name + "' not registered (missing from plugin.yml?).");
             return;
         }
-        // Bukkit expects a CommandExecutor; your command classes already implement it.
-        cmd.setExecutor((org.bukkit.command.CommandExecutor) executor);
+        cmd.setExecutor(executor);
     }
 
     private void saveResourceIfMissing(String resourceName) {
@@ -165,6 +181,75 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         return v.trim();
     }
 
+    private void startInvitePurgeTask() {
+        // Always run (cheap) to keep invites list clean
+        stopTask(invitePurgeTaskId);
+
+        invitePurgeTaskId = getServer().getScheduler().scheduleSyncRepeatingTask(
+                this,
+                () -> invites.purgeExpiredAll(System.currentTimeMillis()),
+                20L * 60L,
+                20L * 60L
+        );
+    }
+
+    private void startAutosaveTask() {
+        stopTask(autosaveTaskId);
+
+        int seconds = Math.max(0, getConfig().getInt("storage.autosave_seconds", 60));
+        if (seconds <= 0) {
+            autosaveTaskId = -1;
+            return;
+        }
+
+        long ticks = seconds * 20L;
+
+        autosaveTaskId = getServer().getScheduler().scheduleSyncRepeatingTask(
+                this,
+                () -> {
+                    try {
+                        if (storage != null && teams != null) storage.saveAll(teams);
+                    } catch (Exception e) {
+                        getLogger().severe("Autosave failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+                    }
+                },
+                ticks,
+                ticks
+        );
+    }
+
+    private void stopTask(int taskId) {
+        if (taskId <= 0) return;
+        try {
+            getServer().getScheduler().cancelTask(taskId);
+        } catch (Exception ignored) {}
+    }
+
+    /**
+     * Keeps update checker state consistent with config.
+     * We cannot reliably "unregister" listeners mid-runtime, so we:
+     * - Register the join listener once
+     * - Keep the checker instance available once created
+     * - Only perform checks when enabled
+     */
+    private void syncUpdateCheckerWithConfig() {
+        boolean enabled = getConfig().getBoolean("update_checker.enabled", true);
+
+        if (this.updateChecker == null) {
+            this.updateChecker = new UpdateChecker(this);
+        }
+
+        // Ensure listener exists + registered once
+        if (this.updateNotifyListener == null) {
+            this.updateNotifyListener = new UpdateNotifyListener(this, updateChecker);
+            getServer().getPluginManager().registerEvents(updateNotifyListener, this);
+        }
+
+        if (enabled) {
+            updateChecker.checkNowAsync();
+        }
+    }
+
     // Keep existing API
     public String getMessagesFileName() {
         return getMessagesFileNameSafe();
@@ -174,4 +259,7 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     public TeamService teams() { return teams; }
     public TeamStorage storage() { return storage; }
     public UpdateChecker updateChecker() { return updateChecker; }
+
+    // 1.0.3
+    public TeamInvites invites() { return invites; }
 }

@@ -49,8 +49,8 @@ public final class UpdateChecker {
     public void checkNowAsync() {
         if (!plugin.getConfig().getBoolean("update_checker.enabled", true)) return;
 
-        String owner = plugin.getConfig().getString("update_checker.github.owner", "").trim();
-        String repo = plugin.getConfig().getString("update_checker.github.repo", "").trim();
+        final String owner = safeTrim(plugin.getConfig().getString("update_checker.github.owner", ""));
+        final String repo  = safeTrim(plugin.getConfig().getString("update_checker.github.repo", ""));
 
         if (owner.isEmpty() || repo.isEmpty() || owner.equalsIgnoreCase("YOUR_GITHUB_USERNAME_OR_ORG")) {
             plugin.getLogger().warning("[UpdateChecker] Skipping update check: update_checker.github.owner/repo not set");
@@ -90,20 +90,28 @@ public final class UpdateChecker {
             // GitHub API: latest release
             String apiUrl = "https://api.github.com/repos/" + owner + "/" + repo + "/releases/latest";
 
-            HttpRequest req = HttpRequest.newBuilder()
+            HttpRequest.Builder b = HttpRequest.newBuilder()
                     .uri(URI.create(apiUrl))
                     .timeout(Duration.ofSeconds(10))
                     .header("Accept", "application/vnd.github+json")
-                    .header("User-Agent", "SorekillTeams-UpdateChecker")
-                    .GET()
-                    .build();
+                    .header("User-Agent", "SorekillTeams/" + current + " (UpdateChecker)")
+                    .GET();
+
+            // Optional token support (safe if absent). If you ever add this config, it "just works".
+            String token = safeTrim(plugin.getConfig().getString("update_checker.github.token", ""));
+            if (!token.isEmpty()) {
+                b.header("Authorization", "Bearer " + token);
+            }
+
+            HttpRequest req = b.build();
 
             HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
             int code = resp.statusCode();
             String body = resp.body() == null ? "" : resp.body();
 
             if (code != 200) {
-                return new Result(false, false, current, "", "", "HTTP " + code);
+                String snippet = body.length() > 160 ? body.substring(0, 160) + "..." : body;
+                return new Result(false, false, current, "", "", "HTTP " + code + " (" + snippet + ")");
             }
 
             // minimal JSON parsing (no dependencies)
@@ -121,6 +129,10 @@ public final class UpdateChecker {
         } catch (Exception e) {
             return new Result(false, false, current, "", "", e.getClass().getSimpleName() + ": " + e.getMessage());
         }
+    }
+
+    private static String safeTrim(String s) {
+        return s == null ? "" : s.trim();
     }
 
     private static String normalizeVersion(String v) {

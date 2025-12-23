@@ -27,12 +27,20 @@ public final class AdminCommand implements CommandExecutor {
 
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
+
+        // Extra safety: command-level permission is also declared in plugin.yml
+        if (!sender.hasPermission("sorekillteams.admin")) {
+            plugin.msg().send(sender, "no_permission");
+            return true;
+        }
+
         if (args.length == 0) {
-            sender.sendMessage(plugin.msg().prefix() + "Use: /sorekillteams reload|version");
+            plugin.msg().send(sender, "admin_usage");
             return true;
         }
 
         String sub = args[0].toLowerCase(Locale.ROOT);
+
         switch (sub) {
             case "reload" -> {
                 if (!sender.hasPermission("sorekillteams.reload")) {
@@ -43,16 +51,21 @@ public final class AdminCommand implements CommandExecutor {
                 plugin.msg().send(sender, "reloaded");
                 return true;
             }
+
             case "version" -> {
                 if (!sender.hasPermission("sorekillteams.version")) {
                     plugin.msg().send(sender, "no_permission");
                     return true;
                 }
-                plugin.msg().send(sender, "version", "{version}", plugin.getDescription().getVersion());
+                plugin.msg().send(sender, "version",
+                        "{version}", plugin.getDescription().getVersion()
+                );
                 return true;
             }
+
             default -> {
-                sender.sendMessage(plugin.msg().prefix() + "Unknown subcommand. Use: /sorekillteams reload|version");
+                plugin.msg().send(sender, "unknown_command");
+                plugin.msg().send(sender, "admin_usage");
                 return true;
             }
         }

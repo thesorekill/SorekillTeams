@@ -14,6 +14,7 @@ import net.chumbucket.sorekillteams.SorekillTeamsPlugin;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Projectile;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 
@@ -25,7 +26,7 @@ public final class FriendlyFireListener implements Listener {
         this.plugin = plugin;
     }
 
-    @EventHandler(ignoreCancelled = true)
+    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
     public void onDamage(EntityDamageByEntityEvent e) {
         if (!plugin.getConfig().getBoolean("friendly_fire.enabled", true)) return;
         if (!(e.getEntity() instanceof Player victim)) return;

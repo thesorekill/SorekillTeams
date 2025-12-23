@@ -13,6 +13,7 @@ package net.chumbucket.sorekillteams.service;
 import net.chumbucket.sorekillteams.SorekillTeamsPlugin;
 import net.chumbucket.sorekillteams.model.Team;
 import net.chumbucket.sorekillteams.model.TeamInvite;
+import net.chumbucket.sorekillteams.model.TeamInvites;
 import net.chumbucket.sorekillteams.storage.TeamStorage;
 import net.chumbucket.sorekillteams.util.Msg;
 import org.bukkit.Bukkit;
@@ -25,12 +26,10 @@ public final class SimpleTeamService implements TeamService {
 
     private final SorekillTeamsPlugin plugin;
     private final TeamStorage storage;
+    private final TeamInvites invites; // 1.0.3 invite store
 
     private final Map<UUID, Team> teams = new ConcurrentHashMap<>();
     private final Map<UUID, UUID> playerToTeam = new ConcurrentHashMap<>();
-
-    // invitee -> (teamId -> invite)
-    private final Map<UUID, Map<UUID, TeamInvite>> invites = new ConcurrentHashMap<>();
 
     // Players who have /tc toggled ON
     private final Set<UUID> teamChatToggled = ConcurrentHashMap.newKeySet();
@@ -41,6 +40,7 @@ public final class SimpleTeamService implements TeamService {
     public SimpleTeamService(SorekillTeamsPlugin plugin, TeamStorage storage) {
         this.plugin = plugin;
         this.storage = storage;
+        this.invites = plugin.invites();
     }
 
     // called by storage on load
@@ -114,14 +114,12 @@ public final class SimpleTeamService implements TeamService {
             teamChatToggled.remove(m);
         }
 
-        // Cooldown is per-inviter; clear only for the owner (optional but sensible)
         inviteCooldownUntil.remove(owner);
 
         teams.remove(t.getId());
 
-        // remove invites that point to this team
-        invites.values().forEach(map -> map.remove(t.getId()));
-        invites.entrySet().removeIf(e -> e.getValue().isEmpty());
+        // remove invites that point to this team (1.0.3 store)
+        invites.clearTeam(t.getId());
 
         safeSave();
     }
@@ -139,6 +137,9 @@ public final class SimpleTeamService implements TeamService {
 
         playerToTeam.remove(player);
         teamChatToggled.remove(player);
+
+        // Optional: clear any invites for this player (reduces confusion)
+        invites.clearTarget(player);
 
         safeSave();
 
@@ -161,9 +162,11 @@ public final class SimpleTeamService implements TeamService {
         if (t.isMember(invitee)) throw new IllegalStateException("Already a member");
         if (playerToTeam.containsKey(invitee)) throw new IllegalStateException("Invitee already in a team");
 
+        // Cooldown
         int cdSeconds = Math.max(0, plugin.getConfig().getInt("invites.cooldown_seconds", 10));
+        long now = System.currentTimeMillis();
+
         if (cdSeconds > 0) {
-            long now = System.currentTimeMillis();
             long until = inviteCooldownUntil.getOrDefault(inviter, 0L);
             if (until > now) {
                 long remaining = (until - now + 999) / 1000;
@@ -175,49 +178,59 @@ public final class SimpleTeamService implements TeamService {
             inviteCooldownUntil.put(inviter, now + (cdSeconds * 1000L));
         }
 
-        int expiry = Math.max(1, plugin.getConfig().getInt("invites.expiry_seconds", 300));
-        long expiresAt = System.currentTimeMillis() + (expiry * 1000L);
+        // Expiry
+        int expirySeconds = Math.max(1, plugin.getConfig().getInt("invites.expiry_seconds", 300));
+        long expiresAt = now + (expirySeconds * 1000L);
 
-        invites.computeIfAbsent(invitee, k -> new ConcurrentHashMap<>())
-                .put(t.getId(), new TeamInvite(t.getId(), inviter, expiresAt));
+        // Duplicate prevention + store
+        TeamInvite inv = new TeamInvite(
+                t.getId(),
+                t.getName(),
+                inviter,
+                invitee,
+                now,
+                expiresAt
+        );
+
+        boolean created = invites.create(inv, now);
+        if (!created) {
+            throw new IllegalStateException("Already invited");
+        }
     }
 
     @Override
     public Optional<TeamInvite> acceptInvite(UUID invitee, Optional<UUID> teamId) {
         if (invitee == null) return Optional.empty();
 
-        cleanupExpired(invitee);
+        long now = System.currentTimeMillis();
 
-        Map<UUID, TeamInvite> map = invites.get(invitee);
-        if (map == null || map.isEmpty()) return Optional.empty();
+        List<TeamInvite> active = invites.listActive(invitee, now);
+        if (active.isEmpty()) return Optional.empty();
 
-        // If they joined a team since the invite was sent, block now (race safety)
         if (playerToTeam.containsKey(invitee)) {
-            // clear any stale invites for this invitee to reduce confusion
-            invites.remove(invitee);
+            invites.clearTarget(invitee);
             throw new IllegalStateException("Invitee already in a team");
         }
 
         TeamInvite inv;
+
         if (teamId != null && teamId.isPresent()) {
-            inv = map.get(teamId.get());
+            UUID id = teamId.get();
+            inv = invites.get(invitee, id, now).orElse(null);
             if (inv == null) return Optional.empty();
         } else {
-            if (map.size() > 1) throw new IllegalStateException("MULTIPLE_INVITES");
-            inv = map.values().iterator().next();
+            if (active.size() > 1) throw new IllegalStateException("MULTIPLE_INVITES");
+            inv = active.get(0);
         }
 
-        long now = System.currentTimeMillis();
-        if (inv.expired(now)) {
-            map.remove(inv.teamId());
-            if (map.isEmpty()) invites.remove(invitee);
+        if (inv.isExpired(now)) {
+            invites.remove(invitee, inv.getTeamId());
             throw new IllegalStateException("INVITE_EXPIRED");
         }
 
-        Team t = teams.get(inv.teamId());
+        Team t = teams.get(inv.getTeamId());
         if (t == null) {
-            map.remove(inv.teamId());
-            if (map.isEmpty()) invites.remove(invitee);
+            invites.remove(invitee, inv.getTeamId());
             return Optional.empty();
         }
 
@@ -237,8 +250,7 @@ public final class SimpleTeamService implements TeamService {
 
         playerToTeam.put(invitee, t.getId());
 
-        map.remove(inv.teamId());
-        if (map.isEmpty()) invites.remove(invitee);
+        invites.remove(invitee, inv.getTeamId());
 
         safeSave();
 
@@ -256,31 +268,23 @@ public final class SimpleTeamService implements TeamService {
     public boolean denyInvite(UUID invitee, Optional<UUID> teamId) {
         if (invitee == null) return false;
 
-        cleanupExpired(invitee);
-
-        Map<UUID, TeamInvite> map = invites.get(invitee);
-        if (map == null || map.isEmpty()) return false;
+        long now = System.currentTimeMillis();
+        List<TeamInvite> active = invites.listActive(invitee, now);
+        if (active.isEmpty()) return false;
 
         if (teamId != null && teamId.isPresent()) {
-            TeamInvite removed = map.remove(teamId.get());
-            if (map.isEmpty()) invites.remove(invitee);
-            return removed != null;
+            return invites.remove(invitee, teamId.get());
         } else {
-            if (map.size() > 1) throw new IllegalStateException("MULTIPLE_INVITES");
-            UUID only = map.keySet().iterator().next();
-            map.remove(only);
-            invites.remove(invitee);
-            return true;
+            if (active.size() > 1) throw new IllegalStateException("MULTIPLE_INVITES");
+            return invites.remove(invitee, active.get(0).getTeamId());
         }
     }
 
     @Override
     public Collection<TeamInvite> getInvites(UUID invitee) {
         if (invitee == null) return List.of();
-        cleanupExpired(invitee);
-        Map<UUID, TeamInvite> map = invites.get(invitee);
-        if (map == null) return List.of();
-        return List.copyOf(map.values());
+        long now = System.currentTimeMillis();
+        return invites.listActive(invitee, now);
     }
 
     @Override
@@ -321,7 +325,8 @@ public final class SimpleTeamService implements TeamService {
         Team team = getTeamByPlayer(sender.getUniqueId()).orElse(null);
         if (team == null) {
             teamChatToggled.remove(sender.getUniqueId());
-            sender.sendMessage(plugin.msg().prefix() + "You are not in a team.");
+            // was hardcoded; now messages.yml-driven
+            plugin.msg().send(sender, "team_not_in_team");
             return;
         }
 
@@ -353,20 +358,10 @@ public final class SimpleTeamService implements TeamService {
 
     /* ----------------- helpers ----------------- */
 
-    private void cleanupExpired(UUID invitee) {
-        Map<UUID, TeamInvite> map = invites.get(invitee);
-        if (map == null || map.isEmpty()) return;
-
-        long now = System.currentTimeMillis();
-        map.entrySet().removeIf(e -> e.getValue().expired(now));
-        if (map.isEmpty()) invites.remove(invitee);
-    }
-
     private void broadcastToTeam(Team team, String message) {
         if (team == null) return;
         if (message == null || message.isBlank()) return;
 
-        // Snapshot to avoid concurrent modification if membership changes mid-send
         Set<UUID> members = new HashSet<>(team.getMembers());
         for (UUID uuid : members) {
             if (uuid == null) continue;
@@ -427,7 +422,6 @@ public final class SimpleTeamService implements TeamService {
         if (name == null) throw new IllegalStateException("Invalid team name");
         String cleaned = name.trim().replaceAll("\\s{2,}", " ");
         if (cleaned.isBlank()) throw new IllegalStateException("Invalid team name");
-        // Keep original casing for display, but cleaned for storage
         return cleaned;
     }
 

@@ -26,6 +26,23 @@ commands:
     permission: sorekillteams.admin
 
 permissions:
+  sorekillteams.*:
+    description: All SorekillTeams permissions
+    default: op
+    children:
+      sorekillteams.use: true
+      sorekillteams.info: true
+      sorekillteams.create: true
+      sorekillteams.invite: true
+      sorekillteams.invites: true
+      sorekillteams.accept: true
+      sorekillteams.deny: true
+      sorekillteams.leave: true
+      sorekillteams.chat: true
+      sorekillteams.admin: true
+      sorekillteams.reload: true
+      sorekillteams.version: true
+
   sorekillteams.use:
     description: Use /team
     default: true
