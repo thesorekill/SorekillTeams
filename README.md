@@ -42,15 +42,15 @@ The plugin is built with future **Velocity and BungeeCord** support in mind and 
 | Command | Usage | Description | Permission |
 |--------|-------|------------|------------|
 | `/team` | `/team help` | Base team command | `sorekillteams.use` |
-| `/team create` | `/team create <name>` | Create a new team | `sorekillteams.create` |
-| `/team invite` | `/team invite <player>` | Invite a player to your team | `sorekillteams.invite` |
+| `/team create` | `/team create [name]` | Create a new team | `sorekillteams.create` |
+| `/team invite` | `/team invite [player]` | Invite a player to your team | `sorekillteams.invite` |
 | `/team accept` | `/team accept` | Accept a pending invite | `sorekillteams.accept` |
 | `/team leave` | `/team leave` | Leave your team | `sorekillteams.leave` |
 | `/team disband` | `/team disband` | Disband your team | `sorekillteams.disband` |
-| `/team sethome` | `/team sethome <name>` | Set a team home | `sorekillteams.sethome` |
-| `/team home` | `/team home <name>` | Teleport to a team home | `sorekillteams.home` |
-| `/team delhome` | `/team delhome <name>` | Delete a team home | `sorekillteams.delhome` |
-| `/tc` | `/tc <message>` | Send a team chat message | `sorekillteams.chat` |
+| `/team sethome` | `/team sethome [name]` | Set a team home | `sorekillteams.sethome` |
+| `/team home` | `/team home [name]` | Teleport to a team home | `sorekillteams.home` |
+| `/team delhome` | `/team delhome [name]` | Delete a team home | `sorekillteams.delhome` |
+| `/tc` | `/tc [message]` | Send a team chat message | `sorekillteams.chat` |
 | `/sorekillteams reload` | `/sorekillteams reload` | Reload the plugin | `sorekillteams.reload` |
 | `/sorekillteams version` | `/sorekillteams version` | View plugin version | `sorekillteams.version` |
 
