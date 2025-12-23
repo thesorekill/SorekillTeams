@@ -10,8 +10,54 @@
 
 package net.chumbucket.sorekillteams.model;
 
+import java.util.Objects;
 import java.util.UUID;
 
-public record TeamInvite(UUID teamId, UUID inviter, long expiresAtMs) {
-    public boolean expired(long nowMs) { return nowMs > expiresAtMs; }
+public final class TeamInvite {
+
+    private final UUID teamId;
+    private final String teamName;
+    private final UUID inviter;        // who sent it
+    private final UUID target;         // who receives it
+    private final long createdAtMs;    // System.currentTimeMillis()
+    private final long expiresAtMs;    // createdAtMs + ttl
+
+    public TeamInvite(UUID teamId,
+                      String teamName,
+                      UUID inviter,
+                      UUID target,
+                      long createdAtMs,
+                      long expiresAtMs) {
+        this.teamId = Objects.requireNonNull(teamId);
+        this.teamName = Objects.requireNonNull(teamName);
+        this.inviter = Objects.requireNonNull(inviter);
+        this.target = Objects.requireNonNull(target);
+        this.createdAtMs = createdAtMs;
+        this.expiresAtMs = expiresAtMs;
+    }
+
+    public UUID getTeamId() { return teamId; }
+    public String getTeamName() { return teamName; }
+    public UUID getInviter() { return inviter; }
+    public UUID getTarget() { return target; }
+    public long getCreatedAtMs() { return createdAtMs; }
+    public long getExpiresAtMs() { return expiresAtMs; }
+
+    public boolean isExpired(long nowMs) {
+        return nowMs >= expiresAtMs;
+    }
+
+    public long getSecondsRemaining(long nowMs) {
+        long rem = (expiresAtMs - nowMs) / 1000L;
+        return Math.max(0L, rem);
+    }
+
+    // --- Compatibility aliases (record-style accessors) ---
+    // Keeps TeamCommand working if it was written against a record TeamInvite.
+    public UUID teamId() { return getTeamId(); }
+    public String teamName() { return getTeamName(); }
+    public UUID inviter() { return getInviter(); }
+    public UUID target() { return getTarget(); }
+    public long createdAtMs() { return getCreatedAtMs(); }
+    public long expiresAtMs() { return getExpiresAtMs(); }
 }

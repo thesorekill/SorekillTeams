@@ -33,8 +33,12 @@ public final class TeamChatListener implements Listener {
         // Only intercept if they are in team chat mode
         if (!plugin.teams().isTeamChatEnabled(player.getUniqueId())) return;
 
-        // Cancel normal chat and send to team chat
+        // Cancel normal chat
         event.setCancelled(true);
-        plugin.teams().sendTeamChat(player, event.getMessage());
+
+        final String msg = event.getMessage();
+
+        // IMPORTANT: AsyncPlayerChatEvent runs off-thread. Schedule team chat send on main thread.
+        plugin.getServer().getScheduler().runTask(plugin, () -> plugin.teams().sendTeamChat(player, msg));
     }
 }

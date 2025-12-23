@@ -36,14 +36,14 @@ public final class TeamChatCommand implements CommandExecutor {
         }
 
         if (!plugin.getConfig().getBoolean("chat.enabled", true)) {
-            p.sendMessage(plugin.msg().prefix() + "Team chat is disabled.");
+            plugin.msg().send(p, "teamchat_disabled");
             return true;
         }
 
         // One-off message
         if (args.length > 0) {
             if (plugin.teams().getTeamByPlayer(p.getUniqueId()).isEmpty()) {
-                p.sendMessage(plugin.msg().prefix() + "You are not in a team.");
+                plugin.msg().send(p, "team_not_in_team");
                 return true;
             }
             String msg = String.join(" ", args).trim();
@@ -54,17 +54,17 @@ public final class TeamChatCommand implements CommandExecutor {
 
         // Toggle mode
         if (!plugin.getConfig().getBoolean("chat.toggle_enabled", true)) {
-            p.sendMessage(plugin.msg().prefix() + "Team chat toggle is disabled. Use /tc <message>.");
+            plugin.msg().send(p, "teamchat_toggle_disabled");
             return true;
         }
 
         if (plugin.teams().getTeamByPlayer(p.getUniqueId()).isEmpty()) {
-            p.sendMessage(plugin.msg().prefix() + "You are not in a team.");
+            plugin.msg().send(p, "team_not_in_team");
             return true;
         }
 
         boolean nowOn = plugin.teams().toggleTeamChat(p.getUniqueId());
-        p.sendMessage(plugin.msg().prefix() + (nowOn ? "Team chat: ON" : "Team chat: OFF"));
+        plugin.msg().send(p, nowOn ? "teamchat_on" : "teamchat_off");
         return true;
     }
 }

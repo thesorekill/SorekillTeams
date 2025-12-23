@@ -16,6 +16,8 @@ storage:
   autosave_seconds: 60
 
 teams:
+  max_members_default: 4
+
   name:
     min_length: 3
     max_length: 16
@@ -24,8 +26,6 @@ teams:
     allow_bold: true
     allow_reset: true
 
-  # If LuckPerms is present, we’ll compare against its group names too.
-  # Otherwise (or additionally), reserve these names.
   reserved_names:
     enabled: true
     list:
@@ -36,9 +36,7 @@ teams:
       - "vip"
       - "default"
 
-  # How strict should “near” be?
   reserved_match:
-    # Blocks exact match, substring, and “very close”
     levenshtein_distance: 2
 
 invites:

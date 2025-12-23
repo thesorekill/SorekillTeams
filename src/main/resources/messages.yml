@@ -15,6 +15,7 @@ reloaded: "{prefix}&aConfig reloaded."
 version: "{prefix}&7SorekillTeams &bv{version}&7 by &fSorekill&7."
 
 unknown_command: "{prefix}&cUnknown subcommand."
+admin_usage: "{prefix}&7Use: /sorekillteams reload|version"
 
 # =========================
 # Team - General Errors (v1.0.2)
@@ -64,10 +65,27 @@ team_invite_accepted_inviter: "{prefix}&a{player}&f accepted your invite and joi
 team_invite_denied: "{prefix}&aYou denied the team invite."
 team_invite_expired: "{prefix}&cThat invite has expired."
 team_invite_cooldown: "{prefix}&cYou must wait &f{seconds}&c seconds before inviting again."
+team_invite_already_pending: "{prefix}&cThat player already has a pending invite to your team."
 
 team_invites_header: "{prefix}&8&m-----&r &cTeam Invites &8&m-----"
 team_invites_none: "{prefix}&cYou have no pending team invites."
 team_invites_entry: "{prefix}&fInvite: &c{team}&f from &c{inviter}&f (&7expires in &c{seconds}&7s&f)"
+
+team_usage: "{prefix}&7Use: /team create|invite|invites|accept|deny|leave|info"
+team_create_usage: "{prefix}&7Usage: /team create <name>"
+team_invite_usage: "{prefix}&7Usage: /team invite <player>"
+team_invite_player_offline: "{prefix}&cThat player is not online."
+team_invite_no_match: "{prefix}&cNo invite matched that team. Use /team invites."
+team_multiple_invites_hint: "{prefix}&7You have multiple invites. Use /team invites then /team accept <team>."
+team_invites_tip: "{prefix}&7Tip: /team accept <team> or /team deny <team>"
+
+# =========================
+# Team Chat
+# =========================
+teamchat_disabled: "{prefix}&cTeam chat is disabled."
+teamchat_toggle_disabled: "{prefix}&cTeam chat toggle is disabled. Use &f/tc <message>&c."
+teamchat_on: "{prefix}&aTeam chat: &fON"
+teamchat_off: "{prefix}&cTeam chat: &fOFF"
 
 # =========================
 # Update Checker

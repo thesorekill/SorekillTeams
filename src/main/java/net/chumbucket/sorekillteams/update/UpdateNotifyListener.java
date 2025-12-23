@@ -12,6 +12,7 @@ package net.chumbucket.sorekillteams.update;
 
 import net.chumbucket.sorekillteams.SorekillTeamsPlugin;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerJoinEvent;
 
@@ -25,13 +26,15 @@ public final class UpdateNotifyListener implements Listener {
         this.checker = checker;
     }
 
-    @EventHandler
+    @EventHandler(priority = EventPriority.LOWEST)
     public void onJoin(PlayerJoinEvent e) {
         if (!plugin.getConfig().getBoolean("update_checker.enabled", true)) return;
         if (!plugin.getConfig().getBoolean("update_checker.notify_ops_on_join", true)) return;
 
         var p = e.getPlayer();
         if (!p.isOp()) return;
+
+        if (checker == null) return;
 
         checker.getLastResult().ifPresent(res -> {
             if (!res.success()) return;

@@ -18,6 +18,10 @@ import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 
 import java.io.File;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -136,22 +140,22 @@ public final class YamlTeamStorage implements TeamStorage {
             yml.set(path + ".members", members.stream().map(UUID::toString).collect(Collectors.toList()));
         }
 
-        // Atomic-ish save: write temp then replace
+        // Safer save on Windows: write temp, then move/replace.
         final File tmp = new File(plugin.getDataFolder(), "teams.yml.tmp");
 
         try {
             yml.save(tmp);
 
-            if (file.exists() && !file.delete()) {
-                // Best effort: if delete fails, try overwrite by rename fallback
-                plugin.getLogger().warning("Could not delete existing teams.yml; attempting overwrite.");
-            }
+            Path tmpPath = tmp.toPath();
+            Path destPath = file.toPath();
 
-            if (!tmp.renameTo(file)) {
-                // On some platforms renameTo can fail; attempt manual fallback
-                // If this happens, keep tmp for recovery.
-                plugin.getLogger().severe("Failed to replace teams.yml with temp file. Temp saved at: " + tmp.getAbsolutePath());
-                return;
+            try {
+                Files.move(tmpPath, destPath,
+                        StandardCopyOption.REPLACE_EXISTING,
+                        StandardCopyOption.ATOMIC_MOVE);
+            } catch (AtomicMoveNotSupportedException ignored) {
+                // Filesystem doesn’t support atomic move; still replace existing
+                Files.move(tmpPath, destPath, StandardCopyOption.REPLACE_EXISTING);
             }
 
         } catch (Exception e) {
