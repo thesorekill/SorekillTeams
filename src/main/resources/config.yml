@@ -45,12 +45,15 @@ invites:
 
 chat:
   enabled: true
-  format: "&8[&bTEAM&8] &f{player}&7: &b{message}"
+  format: "&8&l(&c&l{team}&8&l) &f{player} &8&l> &c{message}"
   toggle_enabled: true
 
 friendly_fire:
-  enabled: true
-  include_projectiles: true
+  enabled: false              # true = friendly fire allowed
+  include_projectiles: true  # only matters when enabled: false
+  message:
+    enabled: true
+    cooldown_ms: 1000
 
 homes:
   enabled: true

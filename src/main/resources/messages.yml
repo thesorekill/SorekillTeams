@@ -21,7 +21,7 @@ admin_usage: "{prefix}&7Use: /sorekillteams reload|version"
 # =========================
 # Team - Usage / Help
 # =========================
-team_usage: "{prefix}&7Use: /team create|invite|invites|accept|deny|leave|disband|info"
+team_usage: "{prefix}&7Use: /team create|invite|invites|accept|deny|leave|disband|info|ff"
 team_create_usage: "{prefix}&7Usage: /team create <name>"
 team_invite_usage: "{prefix}&7Usage: /team invite <player>"
 team_invites_tip: "{prefix}&7Tip: /team accept <team> or /team deny <team>"
@@ -42,7 +42,8 @@ team_invite_self: "{prefix}&cYou can't invite yourself."
 # =========================
 # Team - Create / Disband
 # =========================
-team_created: "{prefix}&fYou created the team &8&l(&c{team}&8&l)&f!"
+team_created: "{prefix}&fYou created the team &8&l(&c&l{team}&8&l)&f!"
+
 team_team_disbanded: "{prefix}&c{team} was disbanded."
 
 # Team name validation (used by TeamNameValidator)
@@ -66,10 +67,17 @@ team_member_left: "{prefix}&c{player}&f left {team}."
 # =========================
 # Team - Info
 # =========================
+team_info_legend: "{prefix}&7Legend: &aOnline &7/ &cOffline"
 team_info_header: "{prefix}&8&m-----&r &cTeam Info &8&m-----"
 team_info_name: "{prefix}&fTeam: &c{team}"
 team_info_owner: "{prefix}&fOwner: &c{owner}"
-team_info_members: "{prefix}&fMembers (&c{count}&f): &c{members}"
+
+# IMPORTANT: do NOT force a color here; members string contains its own &a/&c formatting
+team_info_members: "{prefix}&fMembers (&c{count}&f): {members}"
+
+team_info_created: "{prefix}&fCreated: &c{date}"
+team_info_tc: "{prefix}&fTeam chat toggle: {state}"
+team_info_ff: "{prefix}&fTeam friendly fire: {state}"
 
 # =========================
 # Team - Invites
@@ -100,10 +108,25 @@ teamchat_on: "{prefix}&aTeam chat: &fON"
 teamchat_off: "{prefix}&cTeam chat: &fOFF"
 
 # =========================
+# Friendly Fire (Combat)
+# =========================
+friendly_fire_blocked: "{prefix}&cYou can't damage your teammates."
+
+# =========================
+# Team - Friendly Fire Command
+# =========================
+team_ff_status_on: "{prefix}&aTeam friendly fire is now &fON&a."
+team_ff_status_off: "{prefix}&cTeam friendly fire is now &fOFF&c."
+team_ff_status: "{prefix}&7Team friendly fire: {state}"
+team_ff_usage: "{prefix}&7Usage: /team ff <on|off|toggle|status>"
+
+# =========================
 # Update Checker
 # =========================
 update_checking: "{prefix}&7Checking for updates..."
-update_up_to_date_console: "{prefix}&aUp to date. Running &f{current}&a."
-update_outdated_console: "{prefix}&eUpdate available: &f{latest}&e (you are on &f{current}&e) - {url}"
+update_up_to_date_console: "&aUp to date. Running &f{current}&a."
+update_outdated_console: "&eUpdate available: &f{latest}&e (you are on &f{current}&e) - {url}"
 update_notify_op: "{prefix}&eSorekillTeams update available: &f{latest}&e (you are on &f{current}&e). &b{url}"
-update_check_failed: "{prefix}&cUpdate check failed: &7{reason}"
+update_check_failed: "&cUpdate check failed: &7{reason}"
+update_up_to_date_player: "{prefix}&aUp to date. Running &f{current}&a."
+update_outdated_player: "{prefix}&eUpdate available: &f{latest}&e (you are on &f{current}&e). &b{url}"

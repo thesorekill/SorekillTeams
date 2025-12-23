@@ -83,7 +83,10 @@ public final class SimpleTeamService implements TeamService {
         }
 
         UUID id = UUID.randomUUID();
+
+        // ✅ Team now tracks createdAtMs internally (Team constructor sets it)
         Team t = new Team(id, cleanName, owner);
+
         ensureOwnerInMembers(t);
         dedupeMembers(t);
 
@@ -335,6 +338,12 @@ public final class SimpleTeamService implements TeamService {
     public void sendTeamChat(Player sender, String message) {
         if (sender == null) return;
 
+        // Chat master toggle
+        if (!plugin.getConfig().getBoolean("chat.enabled", true)) {
+            plugin.msg().send(sender, "teamchat_disabled");
+            return;
+        }
+
         Team team = getTeamByPlayer(sender.getUniqueId()).orElse(null);
         if (team == null) {
             teamChatToggled.remove(sender.getUniqueId());
@@ -348,17 +357,25 @@ public final class SimpleTeamService implements TeamService {
 
         String fmt = plugin.getConfig().getString(
                 "chat.format",
-                "&8[&bTEAM&8] &f{player}&7: &b{message}"
+                "&8&l(&c&l{team}&8&l) &f{player} &8&l> &c{message}"
         );
 
         if (fmt == null || fmt.isBlank()) {
-            fmt = "&8[&bTEAM&8] &f{player}&7: &b{message}";
+            fmt = "&8&l(&c&l{team}&8&l) &f{player} &8&l> &c{message}";
         }
+
+        // Replace placeholders; ensure team name respects any allowed color codes stored in the team name
+        String teamName = Msg.color(team.getName());
+
+        // Decide whether to allow color codes in messages:
+        // - Keeping message raw prevents players from injecting color codes unless they type '&' and you colorize it.
+        // - Here we DO allow & color codes because Msg.color() is applied to the whole formatted line.
+        String coloredMsg = Msg.color(message);
 
         String out = Msg.color(
                 fmt.replace("{player}", sender.getName())
-                        .replace("{team}", team.getName())
-                        .replace("{message}", message)
+                        .replace("{team}", teamName)
+                        .replace("{message}", coloredMsg)
         );
 
         broadcastToTeam(team, out);

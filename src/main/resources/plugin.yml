@@ -95,3 +95,7 @@ permissions:
   sorekillteams.version:
     description: View SorekillTeams version info
     default: true
+
+  sorekillteams.ff:
+    description: Allows using /team ff
+    default: true

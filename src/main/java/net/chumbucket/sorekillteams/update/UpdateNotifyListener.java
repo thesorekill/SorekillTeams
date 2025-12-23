@@ -32,7 +32,7 @@ public final class UpdateNotifyListener implements Listener {
         if (!plugin.getConfig().getBoolean("update_checker.notify_ops_on_join", true)) return;
 
         var p = e.getPlayer();
-        if (!p.isOp()) return;
+        if (!p.hasPermission("sorekillteams.admin")) return;
 
         if (checker == null) return;
 
