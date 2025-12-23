@@ -88,33 +88,44 @@ public final class TeamCommand implements CommandExecutor {
                         return true;
                     }
 
-                    String arg1 = args[1].trim();
+                    String arg1 = args[1] == null ? "" : args[1].trim();
 
+                    // /team spy list
                     if (arg1.equalsIgnoreCase("list")) {
                         Collection<Team> spied = plugin.teams().getSpiedTeams(p.getUniqueId());
-                        if (spied.isEmpty()) {
+                        if (spied == null || spied.isEmpty()) {
                             plugin.msg().send(p, "team_spy_list_empty");
                             return true;
                         }
 
                         String joined = spied.stream()
                                 .filter(Objects::nonNull)
-                                .map(t -> Msg.color(t.getName()))
-                                .collect(Collectors.joining(", "));
+                                .map(Team::getName)
+                                .filter(n -> n != null && !n.isBlank())
+                                .sorted(String.CASE_INSENSITIVE_ORDER)
+                                .collect(Collectors.joining(Msg.color("&7, &c")));
 
                         plugin.msg().send(p, "team_spy_list",
-                                "{teams}", Msg.color(joined)
+                                "{teams}", Msg.color("&c" + joined)
                         );
                         return true;
                     }
 
+                    // /team spy off | clear
                     if (arg1.equalsIgnoreCase("off") || arg1.equalsIgnoreCase("clear")) {
                         plugin.teams().clearSpy(p.getUniqueId());
                         plugin.msg().send(p, "team_spy_cleared");
                         return true;
                     }
 
-                    String teamNameRaw = joinArgsAfter(args, 1);
+                    // /team spy <team name...>
+                    // ✅ FIX: join args AFTER "spy" (index 0), not after arg1 (index 1)
+                    String teamNameRaw = joinArgsAfter(args, 0);
+                    if (teamNameRaw.isBlank()) {
+                        plugin.msg().send(p, "team_spy_usage");
+                        return true;
+                    }
+
                     Team team = plugin.teams().getTeamByName(teamNameRaw).orElse(null);
                     if (team == null) {
                         plugin.msg().send(p, "team_spy_team_not_found",
@@ -134,13 +145,15 @@ public final class TeamCommand implements CommandExecutor {
                         );
                     }
 
-                    if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " spy toggled team=" + team.getName() + " -> " + (enabled ? "ON" : "OFF"));
+                    if (debug) {
+                        plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " spy toggled team=" + team.getName() + " -> " + (enabled ? "ON" : "OFF"));
+                    }
                     return true;
                 }
 
-                // -------------------------
-                // existing cases (unchanged)
-                // -------------------------
+                // =========================
+                // existing cases
+                // =========================
 
                 case "create" -> {
                     if (!p.hasPermission("sorekillteams.create")) {

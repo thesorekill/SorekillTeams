@@ -54,7 +54,7 @@ public final class TeamCommandTabCompleter implements TabCompleter {
             return partial(args[1], onlinePlayerNamesExcluding(p.getName()));
         }
 
-        // /team kick <player|uuid>  (Option A = online or uuid; we can at least suggest online names)
+        // /team kick <player|uuid>
         if (args.length == 2 && sub.equals("kick")) {
             if (!p.hasPermission("sorekillteams.kick")) return List.of();
             return partial(args[1], onlinePlayerNamesExcluding(p.getName()));
@@ -66,8 +66,7 @@ public final class TeamCommandTabCompleter implements TabCompleter {
             return partial(args[1], onlinePlayerNamesExcluding(p.getName()));
         }
 
-        // /team accept <teamNameFromInvites...>
-        // /team deny <teamNameFromInvites...>
+        // /team accept|deny <teamNameFromInvites...>
         if (sub.equals("accept") || sub.equals("deny")) {
             if (sub.equals("accept") && !p.hasPermission("sorekillteams.accept")) return List.of();
             if (sub.equals("deny") && !p.hasPermission("sorekillteams.deny")) return List.of();
@@ -76,27 +75,22 @@ public final class TeamCommandTabCompleter implements TabCompleter {
             return partial(joined, inviteTeamNames(p.getUniqueId()));
         }
 
-        // /team spy <team... | list | off | clear>
+        // /team spy <list|off|clear|team...>
         if (sub.equals("spy")) {
             if (!p.hasPermission("sorekillteams.spy")) return List.of();
 
             String joined = String.join(" ", Arrays.copyOfRange(args, 1, args.length)).trim();
 
-            // First argument: show keywords + team names
-            if (args.length >= 2) {
-                List<String> options = new ArrayList<>();
-                options.add("list");
-                options.add("off");
-                options.add("clear");
+            // Always offer keywords
+            List<String> options = new ArrayList<>(List.of("list", "off", "clear"));
 
-                // Add team names for convenience (multi-word supported by our 'joined' matching)
-                options.addAll(allTeamNames());
+            // (Optional) if they typed something that exactly matches an invite team,
+            // it may help them spy quickly on that name too
+            options.addAll(inviteTeamNames(p.getUniqueId()));
 
-                return partial(joined, options);
-            }
+            return partial(joined, options);
         }
 
-        // /team rename <...> (no good suggestions)
         return List.of();
     }
 
@@ -115,8 +109,6 @@ public final class TeamCommandTabCompleter implements TabCompleter {
         if (p.hasPermission("sorekillteams.kick")) subs.add("kick");
         if (p.hasPermission("sorekillteams.transfer")) subs.add("transfer");
         if (p.hasPermission("sorekillteams.rename")) subs.add("rename");
-
-        // 1.0.8
         if (p.hasPermission("sorekillteams.spy")) subs.add("spy");
 
         return subs.stream().distinct().sorted(String.CASE_INSENSITIVE_ORDER).toList();
@@ -144,33 +136,6 @@ public final class TeamCommandTabCompleter implements TabCompleter {
                 .distinct()
                 .sorted(String.CASE_INSENSITIVE_ORDER)
                 .toList();
-    }
-
-    private List<String> allTeamNames() {
-        // Best-effort: if you ever change internal storage, this won't crash.
-        try {
-            // SimpleTeamService exposes allTeams(); but TeamService doesn't.
-            // So we can only safely enumerate if the runtime service actually has that method.
-            // If not available, just return empty list.
-            var svc = plugin.teams();
-            try {
-                var m = svc.getClass().getMethod("allTeams");
-                Object res = m.invoke(svc);
-                if (res instanceof Collection<?> col) {
-                    List<String> names = new ArrayList<>();
-                    for (Object o : col) {
-                        if (o instanceof Team t) {
-                            if (t.getName() != null && !t.getName().isBlank()) names.add(t.getName());
-                        }
-                    }
-                    return names.stream().distinct().sorted(String.CASE_INSENSITIVE_ORDER).toList();
-                }
-            } catch (NoSuchMethodException ignored) {
-                // no enumeration available
-            }
-        } catch (Exception ignored) {}
-
-        return List.of();
     }
 
     private List<String> partial(String token, Collection<String> options) {
