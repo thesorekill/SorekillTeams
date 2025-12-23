@@ -15,6 +15,8 @@ import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 
+import java.util.Locale;
+
 public final class AdminCommand implements CommandExecutor {
 
     private final SorekillTeamsPlugin plugin;
@@ -26,11 +28,11 @@ public final class AdminCommand implements CommandExecutor {
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
         if (args.length == 0) {
-            sender.sendMessage(plugin.msg().format("unknown_command"));
+            sender.sendMessage(plugin.msg().prefix() + "Use: /sorekillteams reload|version");
             return true;
         }
 
-        String sub = args[0].toLowerCase();
+        String sub = args[0].toLowerCase(Locale.ROOT);
         switch (sub) {
             case "reload" -> {
                 if (!sender.hasPermission("sorekillteams.reload")) {
@@ -50,7 +52,7 @@ public final class AdminCommand implements CommandExecutor {
                 return true;
             }
             default -> {
-                sender.sendMessage(plugin.msg().format("unknown_command"));
+                sender.sendMessage(plugin.msg().prefix() + "Unknown subcommand. Use: /sorekillteams reload|version");
                 return true;
             }
         }

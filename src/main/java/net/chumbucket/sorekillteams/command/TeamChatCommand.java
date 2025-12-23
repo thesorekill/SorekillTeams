@@ -40,35 +40,31 @@ public final class TeamChatCommand implements CommandExecutor {
             return true;
         }
 
-        // If they provide a message: send one-off team chat message (no toggle required)
+        // One-off message
         if (args.length > 0) {
             if (plugin.teams().getTeamByPlayer(p.getUniqueId()).isEmpty()) {
                 p.sendMessage(plugin.msg().prefix() + "You are not in a team.");
                 return true;
             }
-            String msg = String.join(" ", args);
+            String msg = String.join(" ", args).trim();
+            if (msg.isEmpty()) return true;
             plugin.teams().sendTeamChat(p, msg);
             return true;
         }
 
-        // No args => toggle mode (if allowed)
+        // Toggle mode
         if (!plugin.getConfig().getBoolean("chat.toggle_enabled", true)) {
             p.sendMessage(plugin.msg().prefix() + "Team chat toggle is disabled. Use /tc <message>.");
             return true;
         }
 
-        // Must be in a team to toggle team chat
         if (plugin.teams().getTeamByPlayer(p.getUniqueId()).isEmpty()) {
             p.sendMessage(plugin.msg().prefix() + "You are not in a team.");
             return true;
         }
 
         boolean nowOn = plugin.teams().toggleTeamChat(p.getUniqueId());
-        if (nowOn) {
-            p.sendMessage(plugin.msg().prefix() + "Team chat: ON");
-        } else {
-            p.sendMessage(plugin.msg().prefix() + "Team chat: OFF");
-        }
+        p.sendMessage(plugin.msg().prefix() + (nowOn ? "Team chat: ON" : "Team chat: OFF"));
         return true;
     }
 }

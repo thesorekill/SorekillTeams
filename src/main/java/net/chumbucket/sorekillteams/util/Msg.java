@@ -27,38 +27,63 @@ public final class Msg {
     }
 
     public void reload() {
+        // Be resilient if reload order ever changes
+        if (!plugin.getDataFolder().exists()) {
+            //noinspection ResultOfMethodCallIgnored
+            plugin.getDataFolder().mkdirs();
+        }
+
         File f = new File(plugin.getDataFolder(), plugin.getMessagesFileName());
         this.messages = YamlConfiguration.loadConfiguration(f);
     }
 
     public String raw(String key) {
+        if (messages == null) return "";
         return messages.getString(key, "");
     }
 
     public String prefix() {
-        return color(raw("prefix"));
+        String p = raw("prefix");
+        if (p == null || p.isBlank()) {
+            p = "&8[&bTeams&8]&r ";
+        }
+        return color(p);
     }
 
     public String format(String key) {
         String s = raw(key);
-        if (s == null) s = "";
+        if (s == null || s.isBlank()) {
+            // Patch-safe: avoid sending totally blank messages
+            // If you prefer strict behavior, change this to "".
+            s = key;
+        }
         s = s.replace("{prefix}", prefix());
         return color(s);
     }
 
     public String format(String key, String... pairs) {
-        String s = format(key);
-        for (int i = 0; i + 1 < pairs.length; i += 2) {
-            s = s.replace(pairs[i], pairs[i + 1]);
+        String s = raw(key);
+        if (s == null || s.isBlank()) {
+            s = key;
         }
-        return s;
+        s = s.replace("{prefix}", prefix());
+
+        for (int i = 0; i + 1 < pairs.length; i += 2) {
+            String from = pairs[i] == null ? "" : pairs[i];
+            String to = pairs[i + 1] == null ? "" : pairs[i + 1];
+            s = s.replace(from, to);
+        }
+
+        return color(s);
     }
 
     public void send(CommandSender to, String key) {
+        if (to == null) return;
         to.sendMessage(format(key));
     }
 
     public void send(CommandSender to, String key, String... pairs) {
+        if (to == null) return;
         to.sendMessage(format(key, pairs));
     }
 

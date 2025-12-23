@@ -22,6 +22,7 @@ import net.chumbucket.sorekillteams.storage.YamlTeamStorage;
 import net.chumbucket.sorekillteams.update.UpdateChecker;
 import net.chumbucket.sorekillteams.update.UpdateNotifyListener;
 import net.chumbucket.sorekillteams.util.Msg;
+import org.bukkit.command.PluginCommand;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
@@ -36,28 +37,42 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
     @Override
     public void onEnable() {
+        // Config + message file
         saveDefaultConfig();
-        saveResourceIfMissing(getMessagesFileName());
+        saveResourceIfMissing(getMessagesFileNameSafe());
 
+        // Core services
         this.msg = new Msg(this);
         this.storage = new YamlTeamStorage(this);
         this.teams = new SimpleTeamService(this, storage);
 
-        storage.loadAll(teams);
+        // Load data (fail-safe)
+        try {
+            storage.loadAll(teams);
+        } catch (Exception e) {
+            getLogger().severe("Failed to load teams from storage. Disabling plugin to prevent data loss.");
+            getLogger().severe("Reason: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+            getServer().getPluginManager().disablePlugin(this);
+            return;
+        }
 
-        // commands
-        if (getCommand("sorekillteams") != null) getCommand("sorekillteams").setExecutor(new AdminCommand(this));
-        if (getCommand("team") != null) getCommand("team").setExecutor(new TeamCommand(this));
-        if (getCommand("tc") != null) getCommand("tc").setExecutor(new TeamChatCommand(this));
+        // Commands
+        registerCommand("sorekillteams", new AdminCommand(this));
+        registerCommand("team", new TeamCommand(this));
+        registerCommand("tc", new TeamChatCommand(this));
 
-        // listeners
+        // Listeners
         getServer().getPluginManager().registerEvents(new FriendlyFireListener(this), this);
         getServer().getPluginManager().registerEvents(new TeamChatListener(this), this);
 
-        // update checker (v1.0.1)
-        this.updateChecker = new UpdateChecker(this);
-        getServer().getPluginManager().registerEvents(new UpdateNotifyListener(this, updateChecker), this);
-        updateChecker.checkNowAsync();
+        // Update checker (config togglable)
+        if (getConfig().getBoolean("updates.enabled", true)) {
+            this.updateChecker = new UpdateChecker(this);
+            getServer().getPluginManager().registerEvents(new UpdateNotifyListener(this, updateChecker), this);
+            updateChecker.checkNowAsync();
+        } else {
+            this.updateChecker = null;
+        }
 
         getLogger().info("SorekillTeams enabled.");
     }
@@ -69,29 +84,90 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
                 storage.saveAll(teams);
             }
         } catch (Exception e) {
-            getLogger().severe("Failed to save teams: " + e.getMessage());
+            getLogger().severe("Failed to save teams: " + e.getClass().getSimpleName() + ": " + e.getMessage());
         }
         getLogger().info("SorekillTeams disabled.");
     }
 
+    /**
+     * Reloads config + messages + storage-backed data.
+     * Patch-safe behavior: rehydrate the TeamService from disk.
+     */
     public void reloadEverything() {
         reloadConfig();
-        saveResourceIfMissing(getMessagesFileName());
+        saveResourceIfMissing(getMessagesFileNameSafe());
 
-        if (msg != null) msg.reload();
+        if (msg != null) {
+            try {
+                msg.reload();
+            } catch (Exception e) {
+                getLogger().warning("Failed to reload messages: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+            }
+        }
 
-        // re-check updates after reload (if configured)
-        if (updateChecker != null) updateChecker.checkNowAsync();
+        // Reload teams from storage (avoid stale in-memory state)
+        try {
+            if (storage == null) storage = new YamlTeamStorage(this);
+
+            // Recreate service to ensure a clean state (simple + reliable for patch releases)
+            this.teams = new SimpleTeamService(this, storage);
+            storage.loadAll(teams);
+        } catch (Exception e) {
+            getLogger().severe("Reload failed while loading teams. Current in-memory state may be incomplete.");
+            getLogger().severe("Reason: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+        }
+
+        // re-check updates after reload (if enabled)
+        if (getConfig().getBoolean("updates.enabled", true) && updateChecker != null) {
+            updateChecker.checkNowAsync();
+        }
+
+        getLogger().info("SorekillTeams reloaded.");
+    }
+
+    private void registerCommand(String name, Object executor) {
+        final PluginCommand cmd = getCommand(name);
+        if (cmd == null) {
+            getLogger().warning("Command '/" + name + "' not registered (missing from plugin.yml?).");
+            return;
+        }
+        // Bukkit expects a CommandExecutor; your command classes already implement it.
+        cmd.setExecutor((org.bukkit.command.CommandExecutor) executor);
     }
 
     private void saveResourceIfMissing(String resourceName) {
-        if (!getDataFolder().exists()) getDataFolder().mkdirs();
+        if (resourceName == null || resourceName.isBlank()) return;
+
+        if (!getDataFolder().exists() && !getDataFolder().mkdirs()) {
+            getLogger().warning("Could not create plugin data folder: " + getDataFolder().getAbsolutePath());
+            return;
+        }
+
         File file = new File(getDataFolder(), resourceName);
-        if (!file.exists()) saveResource(resourceName, false);
+        if (!file.exists()) {
+            try {
+                saveResource(resourceName, false);
+            } catch (IllegalArgumentException ex) {
+                getLogger().warning("Resource '" + resourceName + "' not found in jar; skipping file copy.");
+            }
+        }
     }
 
+    /**
+     * Safe wrapper that never returns blank, and tolerates config weirdness.
+     */
+    private String getMessagesFileNameSafe() {
+        String v = null;
+        try {
+            v = getConfig().getString("files.messages", "messages.yml");
+        } catch (Exception ignored) {}
+        if (v == null || v.isBlank()) return "messages.yml";
+        return v.trim();
+    }
+
+    // Keep existing API
     public String getMessagesFileName() {
-        return getConfig().getString("files.messages", "messages.yml");
+        return getMessagesFileNameSafe();
     }
 
     public Msg msg() { return msg; }

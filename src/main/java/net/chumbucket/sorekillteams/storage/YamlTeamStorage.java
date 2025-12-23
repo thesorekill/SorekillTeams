@@ -14,11 +14,12 @@ import net.chumbucket.sorekillteams.SorekillTeamsPlugin;
 import net.chumbucket.sorekillteams.model.Team;
 import net.chumbucket.sorekillteams.service.SimpleTeamService;
 import net.chumbucket.sorekillteams.service.TeamService;
+import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 
 import java.io.File;
-import java.util.List;
-import java.util.UUID;
+import java.util.*;
+import java.util.stream.Collectors;
 
 public final class YamlTeamStorage implements TeamStorage {
 
@@ -33,57 +34,140 @@ public final class YamlTeamStorage implements TeamStorage {
     @Override
     public void loadAll(TeamService service) {
         if (!(service instanceof SimpleTeamService simple)) {
-            plugin.getLogger().warning("Storage load skipped: unsupported TeamService type");
+            plugin.getLogger().warning("Storage load skipped: unsupported TeamService type (" +
+                    (service == null ? "null" : service.getClass().getName()) + ")");
             return;
         }
 
-        if (!file.exists()) return;
+        if (!file.exists()) {
+            plugin.getLogger().info("No teams.yml found; starting fresh.");
+            return;
+        }
 
-        YamlConfiguration yml = YamlConfiguration.loadConfiguration(file);
-        var sec = yml.getConfigurationSection("teams");
-        if (sec == null) return;
+        final YamlConfiguration yml = YamlConfiguration.loadConfiguration(file);
+        final ConfigurationSection sec = yml.getConfigurationSection("teams");
+        if (sec == null) {
+            plugin.getLogger().info("teams.yml has no 'teams' section; starting fresh.");
+            return;
+        }
+
+        int loaded = 0;
+        int skipped = 0;
 
         for (String key : sec.getKeys(false)) {
-            var tSec = sec.getConfigurationSection(key);
-            if (tSec == null) continue;
-
-            UUID id = UUID.fromString(key);
-            String name = tSec.getString("name", "Team");
-            UUID owner = UUID.fromString(tSec.getString("owner"));
-            List<String> membersStr = tSec.getStringList("members");
-
-            Team t = new Team(id, name, owner);
-            t.getMembers().clear();
-            for (String ms : membersStr) {
-                t.getMembers().add(UUID.fromString(ms));
+            final ConfigurationSection tSec = sec.getConfigurationSection(key);
+            if (tSec == null) {
+                skipped++;
+                continue;
             }
-            // ensure owner is included
-            t.getMembers().add(owner);
 
-            simple.putLoadedTeam(t);
+            try {
+                final UUID id = safeUuid(key);
+                if (id == null) {
+                    plugin.getLogger().warning("Skipping team with invalid UUID key: " + key);
+                    skipped++;
+                    continue;
+                }
+
+                final String nameRaw = tSec.getString("name", "Team");
+                final String name = (nameRaw == null || nameRaw.isBlank()) ? "Team" : nameRaw.trim();
+
+                final UUID owner = safeUuid(tSec.getString("owner", null));
+                if (owner == null) {
+                    plugin.getLogger().warning("Skipping team " + id + " ('" + name + "') due to missing/invalid owner UUID");
+                    skipped++;
+                    continue;
+                }
+
+                final List<String> membersStr = tSec.getStringList("members");
+                final Set<UUID> members = new LinkedHashSet<>();
+                for (String ms : membersStr) {
+                    UUID m = safeUuid(ms);
+                    if (m != null) members.add(m);
+                }
+
+                // Ensure owner is included
+                members.add(owner);
+
+                final Team t = new Team(id, name, owner);
+                t.getMembers().clear();
+                t.getMembers().addAll(members);
+
+                simple.putLoadedTeam(t);
+                loaded++;
+            } catch (Exception e) {
+                plugin.getLogger().warning("Skipping malformed team entry '" + key + "': " +
+                        e.getClass().getSimpleName() + ": " + e.getMessage());
+                skipped++;
+            }
         }
-        plugin.getLogger().info("Loaded " + sec.getKeys(false).size() + " teams.");
+
+        plugin.getLogger().info("Loaded " + loaded + " teams. Skipped " + skipped + " malformed entries.");
     }
 
     @Override
     public void saveAll(TeamService service) {
-        if (!(service instanceof SimpleTeamService simple)) return;
-
-        if (!plugin.getDataFolder().exists()) plugin.getDataFolder().mkdirs();
-
-        YamlConfiguration yml = new YamlConfiguration();
-
-        for (Team t : simple.allTeams()) {
-            String path = "teams." + t.getId();
-            yml.set(path + ".name", t.getName());
-            yml.set(path + ".owner", t.getOwner().toString());
-            yml.set(path + ".members", t.getMembers().stream().map(UUID::toString).toList());
+        if (!(service instanceof SimpleTeamService simple)) {
+            plugin.getLogger().warning("Storage save skipped: unsupported TeamService type (" +
+                    (service == null ? "null" : service.getClass().getName()) + ")");
+            return;
         }
 
+        if (!plugin.getDataFolder().exists() && !plugin.getDataFolder().mkdirs()) {
+            plugin.getLogger().severe("Failed to create plugin data folder: " + plugin.getDataFolder().getAbsolutePath());
+            return;
+        }
+
+        final YamlConfiguration yml = new YamlConfiguration();
+
+        // Write deterministic ordering (helps diffing & debugging)
+        final List<Team> teams = new ArrayList<>(simple.allTeams());
+        teams.sort(Comparator.comparing(t -> t.getId().toString()));
+
+        for (Team t : teams) {
+            final String path = "teams." + t.getId();
+            yml.set(path + ".name", t.getName());
+            yml.set(path + ".owner", t.getOwner().toString());
+
+            // Ensure members list is unique + includes owner
+            final LinkedHashSet<UUID> members = new LinkedHashSet<>(t.getMembers());
+            members.add(t.getOwner());
+
+            yml.set(path + ".members", members.stream().map(UUID::toString).collect(Collectors.toList()));
+        }
+
+        // Atomic-ish save: write temp then replace
+        final File tmp = new File(plugin.getDataFolder(), "teams.yml.tmp");
+
         try {
-            yml.save(file);
+            yml.save(tmp);
+
+            if (file.exists() && !file.delete()) {
+                // Best effort: if delete fails, try overwrite by rename fallback
+                plugin.getLogger().warning("Could not delete existing teams.yml; attempting overwrite.");
+            }
+
+            if (!tmp.renameTo(file)) {
+                // On some platforms renameTo can fail; attempt manual fallback
+                // If this happens, keep tmp for recovery.
+                plugin.getLogger().severe("Failed to replace teams.yml with temp file. Temp saved at: " + tmp.getAbsolutePath());
+                return;
+            }
+
         } catch (Exception e) {
-            plugin.getLogger().severe("Failed to save teams.yml: " + e.getMessage());
+            plugin.getLogger().severe("Failed to save teams.yml: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+            // Keep tmp if it exists; can be used to recover.
+        }
+    }
+
+    private UUID safeUuid(String s) {
+        if (s == null) return null;
+        final String v = s.trim();
+        if (v.isEmpty()) return null;
+        try {
+            return UUID.fromString(v);
+        } catch (IllegalArgumentException ex) {
+            return null;
         }
     }
 }
