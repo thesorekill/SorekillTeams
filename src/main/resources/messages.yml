@@ -12,3 +12,44 @@ version: "{prefix}&7SorekillTeams &bv{version}&7 by &fSorekill&7."
 
 # Generic errors
 unknown_command: "{prefix}&cUnknown subcommand. Try: &f/sorekillteams <reload|version>&c."
+
+# Team info messages
+team_info_header: "{prefix}&8&m-----&r &cTeam Info &8&m-----"
+team_info_name: "{prefix}&fTeam: &c{team}"
+team_info_owner: "{prefix}&fOwner: &c{owner}"
+team_info_members: "{prefix}&fMembers (&c{count}&f): &c{members}"
+team_not_in_team: "{prefix}&cYou are not in a team."
+
+# Team join/leave messages
+team_joined: "{prefix}&aYou joined &c{team}&a!"
+team_joined_who: "{prefix}&7Invited by: &f{inviter}&7."
+team_team_full: "{prefix}&cThat team is full."
+team_member_joined: "{prefix}&a{player}&f joined {team}."
+team_member_left: "{prefix}&c{player}&f left {team}."
+team_team_disbanded: "{prefix}&c{team} was disbanded."
+
+# Team creation messages
+team_created: "{prefix}&fYou created the team &8&l(&c{team}&8&l)&f!"
+team_name_invalid: "{prefix}&cInvalid team name. Use letters/numbers/_ and only color (&0-&f) + bold (&l)."
+team_name_reserved: "{prefix}&cThat team name is too close to a rank/group name. Pick something else."
+
+# Team invites messages
+team_no_invites: "{prefix}&cYou have no pending team invites."
+team_invite_accepted_inviter: "{prefix}&a{player}&f accepted your invite and joined &c{team}&f."
+team_invite_expired: "{prefix}&cThat invite has expired."
+team_invite_denied: "{prefix}&aYou denied the team invite."
+team_invite_received: "{prefix}&f{inviter} has invited you to join the team &c{team}&f."
+team_invite_sent: "{prefix}&fInvited &c{target}&f to your team &c{team}&f."
+team_invite_cooldown: "{prefix}&cYou must wait &f{seconds}&c seconds before inviting again."
+
+# Team multiple invites message
+team_invites_header: "{prefix}&8&m-----&r &cTeam Invites &8&m-----"
+team_invites_none: "{prefix}&cYou have no pending team invites."
+team_invites_entry: "{prefix}&fInvite: &c{team}&f from &c{inviter}&f (&7expires in &c{seconds}&7s&f)"
+
+# Update checker messages
+update_checking: "{prefix}&7Checking for updates..."
+update_up_to_date_console: "{prefix}&aUp to date. Running &f{current}&a."
+update_outdated_console: "{prefix}&eUpdate available: &f{latest}&e (you are on &f{current}&e) - {url}"
+update_notify_op: "{prefix}&eSorekillTeams update available: &f{latest}&e (you are on &f{current}&e). &b{url}"
+update_check_failed: "{prefix}&cUpdate check failed: &7{reason}"

@@ -2,16 +2,44 @@
 # SorekillTeams - config.yml
 # =========================
 
+update_checker:
+  enabled: true
+  github:
+    owner: "thesorekill"
+    repo: "SorekillTeams"
+
+  # Notify ops in-game if an update is available
+  notify_ops_on_join: true
+
 storage:
   type: yaml
   autosave_seconds: 60
 
 teams:
-  max_members_default: 4
   name:
     min_length: 3
     max_length: 16
-    allowed: "a-zA-Z0-9_"
+    allowed_plain: "a-zA-Z0-9_"
+    allow_color_codes: true
+    allow_bold: true
+    allow_reset: true
+
+  # If LuckPerms is present, we’ll compare against its group names too.
+  # Otherwise (or additionally), reserve these names.
+  reserved_names:
+    enabled: true
+    list:
+      - "owner"
+      - "admin"
+      - "mod"
+      - "helper"
+      - "vip"
+      - "default"
+
+  # How strict should “near” be?
+  reserved_match:
+    # Blocks exact match, substring, and “very close”
+    levenshtein_distance: 2
 
 invites:
   expiry_seconds: 300

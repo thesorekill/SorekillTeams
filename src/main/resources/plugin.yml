@@ -26,6 +26,10 @@ commands:
     permission: sorekillteams.admin
 
 permissions:
+  sorekillteams.info:
+    description: Allows viewing your team info
+    default: true
+
   sorekillteams.use:
     description: Use /team
     default: true
@@ -38,8 +42,16 @@ permissions:
     description: Invite players to your team
     default: true
 
+  sorekillteams.invites:
+    description: Check received invites
+    default: true
+
   sorekillteams.accept:
     description: Accept a team invite
+    default: true
+
+  sorekillteams.deny:
+    description: Deny a team invite
     default: true
 
   sorekillteams.leave:
