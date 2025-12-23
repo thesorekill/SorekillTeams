@@ -25,8 +25,35 @@ public final class TeamInvites {
     private final Map<UUID, Map<UUID, TeamInvite>> invitesByTarget = new ConcurrentHashMap<>();
 
     // Hard cap to prevent invite spam + memory growth.
-    // Keep modest; servers can bump later if you expose it to config.
     private static final int MAX_INVITES_PER_TARGET = 25;
+
+    /* ------------------------------------------------------------
+     * Convenience overloads (compat with older callers)
+     * ------------------------------------------------------------ */
+
+    public List<TeamInvite> listActive(UUID target) {
+        return listActive(target, System.currentTimeMillis());
+    }
+
+    public Optional<TeamInvite> get(UUID target, UUID teamId) {
+        return get(target, teamId, System.currentTimeMillis());
+    }
+
+    public boolean create(TeamInvite invite) {
+        return create(invite, System.currentTimeMillis());
+    }
+
+    public int purgeExpired(UUID target) {
+        return purgeExpired(target, System.currentTimeMillis());
+    }
+
+    public int purgeExpiredAll() {
+        return purgeExpiredAll(System.currentTimeMillis());
+    }
+
+    /* ------------------------------------------------------------
+     * Primary APIs
+     * ------------------------------------------------------------ */
 
     public List<TeamInvite> listActive(UUID target, long nowMs) {
         if (target == null) return List.of();
@@ -38,6 +65,7 @@ public final class TeamInvites {
 
         // Stable ordering: soonest-expiring first, then teamId as tie-breaker
         return inner.values().stream()
+                .filter(Objects::nonNull)
                 .sorted(Comparator
                         .comparingLong(TeamInvite::getExpiresAtMs)
                         .thenComparing(inv -> inv.getTeamId().toString()))
@@ -66,52 +94,37 @@ public final class TeamInvites {
 
     /**
      * Returns true if created; false if duplicate already exists (and not expired).
-     *
-     * Behaviors:
-     * - Purges expired invites for the target first
-     * - Prevents duplicates for the same target+team
-     * - Caps invites per target
      */
     public boolean create(TeamInvite invite, long nowMs) {
         if (invite == null) return false;
 
         UUID target = invite.getTarget();
         UUID teamId = invite.getTeamId();
-
         if (target == null || teamId == null) return false;
 
         purgeExpired(target, nowMs);
 
         Map<UUID, TeamInvite> inner =
-                invitesByTarget.computeIfAbsent(target, k -> new ConcurrentHashMap<>());
+                invitesByTarget.computeIfAbsent(target, __ -> new ConcurrentHashMap<>());
 
         // If an invite already exists for this team, only allow if it is expired (replace it).
         TeamInvite existing = inner.get(teamId);
-        if (existing != null) {
-            if (!existing.isExpired(nowMs)) {
-                return false; // still active; treat as duplicate
-            }
-            // Replace expired invite
-            inner.put(teamId, invite);
-            return true;
+        if (existing != null && !existing.isExpired(nowMs)) {
+            return false; // still active => duplicate
         }
 
-        // Cap total invites per target
+        // Cap invites per target; evict soonest-to-expire to make room
         if (inner.size() >= MAX_INVITES_PER_TARGET) {
-            // Drop the oldest/most-expired (or soonest-expiring) to make room.
-            // Since we just purged, we'll evict the soonest-to-expire invite.
             UUID evictId = inner.values().stream()
+                    .filter(Objects::nonNull)
                     .min(Comparator
                             .comparingLong(TeamInvite::getExpiresAtMs)
                             .thenComparing(i -> i.getTeamId().toString()))
                     .map(TeamInvite::getTeamId)
                     .orElse(null);
 
-            if (evictId != null) {
-                inner.remove(evictId);
-            }
+            if (evictId != null) inner.remove(evictId);
 
-            // If we still can't make room (paranoia), fail.
             if (inner.size() >= MAX_INVITES_PER_TARGET) {
                 cleanupIfEmpty(target, inner);
                 return false;
@@ -142,12 +155,10 @@ public final class TeamInvites {
         if (inner == null || inner.isEmpty()) return 0;
 
         int before = inner.size();
-
         inner.values().removeIf(inv -> inv == null || inv.isExpired(nowMs));
-
         int after = inner.size();
-        cleanupIfEmpty(target, inner);
 
+        cleanupIfEmpty(target, inner);
         return before - after;
     }
 
@@ -180,14 +191,12 @@ public final class TeamInvites {
     public String debugSummary() {
         return invitesByTarget.entrySet().stream()
                 .sorted(Comparator.comparing(e -> e.getKey().toString()))
-                .map(e -> e.getKey() + ":" + e.getValue().size())
+                .map(e -> e.getKey() + ":" + (e.getValue() == null ? 0 : e.getValue().size()))
                 .collect(Collectors.joining(", "));
     }
 
     private void cleanupIfEmpty(UUID target, Map<UUID, TeamInvite> inner) {
         if (target == null || inner == null) return;
-        if (inner.isEmpty()) {
-            invitesByTarget.remove(target);
-        }
+        if (inner.isEmpty()) invitesByTarget.remove(target);
     }
 }

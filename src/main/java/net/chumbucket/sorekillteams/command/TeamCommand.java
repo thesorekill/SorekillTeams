@@ -63,11 +63,72 @@ public final class TeamCommand implements CommandExecutor {
             return true;
         }
 
-        final boolean debug = plugin.getConfig().getBoolean("commands.debug", false);
+        // ✅ FIX: your config uses chat.debug (not commands.debug)
+        final boolean debug = plugin.getConfig().getBoolean("chat.debug", false);
         final String sub = args[0].toLowerCase(Locale.ROOT);
 
         try {
             switch (sub) {
+
+                // =========================
+                // 1.1.0: /team chat ...
+                // =========================
+                case "chat", "tc", "teamchat" -> {
+                    if (!plugin.getConfig().getBoolean("chat.enabled", true)) {
+                        plugin.msg().send(p, "teamchat_disabled");
+                        return true;
+                    }
+                    if (!plugin.getConfig().getBoolean("chat.toggle_enabled", true)) {
+                        plugin.msg().send(p, "teamchat_toggle_disabled");
+                        return true;
+                    }
+                    if (!p.hasPermission("sorekillteams.teamchat")) {
+                        plugin.msg().send(p, "no_permission");
+                        return true;
+                    }
+
+                    // /team chat  -> toggle
+                    if (args.length < 2) {
+                        boolean newState = plugin.teams().toggleTeamChat(p.getUniqueId());
+                        plugin.msg().send(p, newState ? "teamchat_on" : "teamchat_off");
+
+                        if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " teamchat toggle -> " + (newState ? "ON" : "OFF"));
+                        return true;
+                    }
+
+                    String mode = args[1] == null ? "" : args[1].trim().toLowerCase(Locale.ROOT);
+                    switch (mode) {
+                        case "on", "enable", "enabled", "true" -> {
+                            plugin.teams().setTeamChatEnabled(p.getUniqueId(), true);
+                            plugin.msg().send(p, "teamchat_on");
+                            if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " teamchat -> ON");
+                            return true;
+                        }
+                        case "off", "disable", "disabled", "false" -> {
+                            plugin.teams().setTeamChatEnabled(p.getUniqueId(), false);
+                            plugin.msg().send(p, "teamchat_off");
+                            if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " teamchat -> OFF");
+                            return true;
+                        }
+                        case "toggle" -> {
+                            boolean newState = plugin.teams().toggleTeamChat(p.getUniqueId());
+                            plugin.msg().send(p, newState ? "teamchat_on" : "teamchat_off");
+                            if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " teamchat toggle -> " + (newState ? "ON" : "OFF"));
+                            return true;
+                        }
+                        case "status" -> {
+                            boolean on = plugin.teams().isTeamChatEnabled(p.getUniqueId());
+                            plugin.msg().send(p, on ? "teamchat_on" : "teamchat_off");
+                            return true;
+                        }
+                        default -> {
+                            // Keep it simple: show usage line already present in messages.yml
+                            // (you currently say: "teamchat_toggle_disabled ... Use /tc <message>.")
+                            plugin.msg().send(p, "teamchat_toggle_disabled");
+                            return true;
+                        }
+                    }
+                }
 
                 // =========================
                 // 1.0.8: /team spy ...

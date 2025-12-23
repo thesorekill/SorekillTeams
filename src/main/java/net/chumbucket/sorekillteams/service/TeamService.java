@@ -22,8 +22,6 @@ public interface TeamService {
 
     Optional<Team> getTeamByPlayer(UUID player);
     Optional<Team> getTeamById(UUID teamId);
-
-    // 1.0.8: find a team by name (case-insensitive, whitespace-normalized)
     Optional<Team> getTeamByName(String teamName);
 
     Team createTeam(UUID owner, String name);
@@ -42,20 +40,32 @@ public interface TeamService {
     boolean areTeammates(UUID a, UUID b);
 
     void kickMember(UUID owner, UUID member);
+
     void transferOwnership(UUID owner, UUID newOwner);
 
     void renameTeam(UUID owner, String newName);
 
+    // Team Chat (A)
     boolean isTeamChatEnabled(UUID player);
     void setTeamChatEnabled(UUID player, boolean enabled);
     boolean toggleTeamChat(UUID player);
-
     void sendTeamChat(Player sender, String message);
 
-    // =========================
-    // 1.0.8: Team Spy (per-team)
-    // =========================
+    // Spy (A)
     boolean toggleSpy(UUID spyPlayer, UUID teamId);
     void clearSpy(UUID spyPlayer);
     Collection<Team> getSpiedTeams(UUID spyPlayer);
+
+    // =========================
+    // Admin (D)
+    // =========================
+
+    /** Force-disband a team, regardless of owner. */
+    void adminDisbandTeam(UUID teamId);
+
+    /** Force-set the owner of a team, ensuring new owner is a member. */
+    void adminSetOwner(UUID teamId, UUID newOwner);
+
+    /** Force-kick a player from their team. If they are owner, disbands the team. */
+    void adminKickPlayer(UUID player);
 }

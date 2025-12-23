@@ -130,7 +130,7 @@ public final class YamlTeamStorage implements TeamStorage {
             return;
         }
 
-        // ✅ 1.0.6: SNAPSHOT first to avoid concurrent modification during async autosave
+        // Snapshot first to avoid concurrent modification during async autosave
         final List<TeamSnapshot> snapshot = snapshotTeams(simple);
 
         final YamlConfiguration yml = new YamlConfiguration();
@@ -175,12 +175,13 @@ public final class YamlTeamStorage implements TeamStorage {
 
     private List<TeamSnapshot> snapshotTeams(SimpleTeamService simple) {
         final List<Team> teams = new ArrayList<>(simple.allTeams());
+        teams.removeIf(Objects::isNull);
         teams.sort(Comparator.comparing(t -> t.getId().toString()));
 
         final List<TeamSnapshot> out = new ArrayList<>(teams.size());
 
         for (Team t : teams) {
-            if (t == null || t.getId() == null || t.getOwner() == null) continue;
+            if (t.getId() == null || t.getOwner() == null) continue;
 
             final UUID id = t.getId();
             final String name = (t.getName() == null || t.getName().isBlank()) ? "Team" : t.getName();
@@ -188,7 +189,6 @@ public final class YamlTeamStorage implements TeamStorage {
             final long created = t.getCreatedAtMs();
             final boolean ff = t.isFriendlyFireEnabled();
 
-            // ✅ FIX: not final, so try/catch assignment is legal
             Set<UUID> membersCopy;
             try {
                 membersCopy = new LinkedHashSet<>(t.getMembers());
