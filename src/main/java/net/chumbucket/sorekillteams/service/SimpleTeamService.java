@@ -72,14 +72,14 @@ public final class SimpleTeamService implements TeamService {
 
     @Override
     public Team createTeam(UUID owner, String name) {
-        if (owner == null) throw new IllegalStateException("Invalid player");
-        if (playerToTeam.containsKey(owner)) throw new IllegalStateException("Already in a team");
+        if (owner == null) throw new TeamServiceException(TeamError.INVALID_PLAYER, "invalid_player");
+        if (playerToTeam.containsKey(owner)) throw new TeamServiceException(TeamError.ALREADY_IN_TEAM, "team_already_in_team");
 
         final String cleanName = normalizeTeamNameOrThrow(name);
 
         // prevent duplicates by normalized name
         if (teamNameTaken(cleanName)) {
-            throw new IllegalStateException("Team name already taken");
+            throw new TeamServiceException(TeamError.TEAM_NAME_TAKEN, "team_name_taken");
         }
 
         UUID id = UUID.randomUUID();
@@ -96,10 +96,12 @@ public final class SimpleTeamService implements TeamService {
 
     @Override
     public void disbandTeam(UUID owner) {
-        if (owner == null) throw new IllegalStateException("Invalid player");
+        if (owner == null) throw new TeamServiceException(TeamError.INVALID_PLAYER, "invalid_player");
 
-        Team t = getTeamByPlayer(owner).orElseThrow(() -> new IllegalStateException("Not in a team"));
-        if (!t.getOwner().equals(owner)) throw new IllegalStateException("Not owner");
+        Team t = getTeamByPlayer(owner).orElseThrow(() ->
+                new TeamServiceException(TeamError.NOT_IN_TEAM, "team_not_in_team"));
+
+        if (!t.getOwner().equals(owner)) throw new TeamServiceException(TeamError.NOT_OWNER, "team_not_owner");
 
         broadcastToTeam(t, plugin.msg().format(
                 "team_team_disbanded",
@@ -126,10 +128,15 @@ public final class SimpleTeamService implements TeamService {
 
     @Override
     public void leaveTeam(UUID player) {
-        if (player == null) throw new IllegalStateException("Invalid player");
+        if (player == null) throw new TeamServiceException(TeamError.INVALID_PLAYER, "invalid_player");
 
-        Team t = getTeamByPlayer(player).orElseThrow(() -> new IllegalStateException("Not in a team"));
-        if (t.getOwner().equals(player)) throw new IllegalStateException("Owner must disband or transfer later");
+        Team t = getTeamByPlayer(player).orElseThrow(() ->
+                new TeamServiceException(TeamError.NOT_IN_TEAM, "team_not_in_team"));
+
+        if (t.getOwner().equals(player)) {
+            // v1: owner must disband (or you can add transfer later)
+            throw new TeamServiceException(TeamError.OWNER_CANNOT_LEAVE, "team_owner_cannot_leave");
+        }
 
         t.getMembers().remove(player);
         ensureOwnerInMembers(t);
@@ -153,14 +160,19 @@ public final class SimpleTeamService implements TeamService {
 
     @Override
     public void invite(UUID inviter, UUID invitee) {
-        if (inviter == null || invitee == null) throw new IllegalStateException("Invalid player");
-        if (inviter.equals(invitee)) throw new IllegalStateException("You cannot invite yourself");
+        if (inviter == null || invitee == null) throw new TeamServiceException(TeamError.INVALID_PLAYER, "invalid_player");
+        if (inviter.equals(invitee)) throw new TeamServiceException(TeamError.INVITE_SELF, "team_invite_self");
 
-        Team t = getTeamByPlayer(inviter).orElseThrow(() -> new IllegalStateException("Not in a team"));
-        if (!t.getOwner().equals(inviter)) throw new IllegalStateException("Only owner can invite (v1)");
+        Team t = getTeamByPlayer(inviter).orElseThrow(() ->
+                new TeamServiceException(TeamError.NOT_IN_TEAM, "team_not_in_team"));
 
-        if (t.isMember(invitee)) throw new IllegalStateException("Already a member");
-        if (playerToTeam.containsKey(invitee)) throw new IllegalStateException("Invitee already in a team");
+        if (!t.getOwner().equals(inviter)) {
+            // v1 rule: only owner can invite
+            throw new TeamServiceException(TeamError.ONLY_OWNER_CAN_INVITE, "team_not_owner");
+        }
+
+        if (t.isMember(invitee)) throw new TeamServiceException(TeamError.ALREADY_MEMBER, "team_already_member");
+        if (playerToTeam.containsKey(invitee)) throw new TeamServiceException(TeamError.INVITEE_IN_TEAM, "team_invitee_in_team");
 
         // Cooldown
         int cdSeconds = Math.max(0, plugin.getConfig().getInt("invites.cooldown_seconds", 10));
@@ -170,10 +182,11 @@ public final class SimpleTeamService implements TeamService {
             long until = inviteCooldownUntil.getOrDefault(inviter, 0L);
             if (until > now) {
                 long remaining = (until - now + 999) / 1000;
-                throw new IllegalStateException(plugin.msg().format(
+                throw new TeamServiceException(
+                        TeamError.INVITE_COOLDOWN,
                         "team_invite_cooldown",
                         "{seconds}", String.valueOf(remaining)
-                ));
+                );
             }
             inviteCooldownUntil.put(inviter, now + (cdSeconds * 1000L));
         }
@@ -194,7 +207,7 @@ public final class SimpleTeamService implements TeamService {
 
         boolean created = invites.create(inv, now);
         if (!created) {
-            throw new IllegalStateException("Already invited");
+            throw new TeamServiceException(TeamError.INVITE_ALREADY_PENDING, "team_invite_already_pending");
         }
     }
 
@@ -209,7 +222,7 @@ public final class SimpleTeamService implements TeamService {
 
         if (playerToTeam.containsKey(invitee)) {
             invites.clearTarget(invitee);
-            throw new IllegalStateException("Invitee already in a team");
+            throw new TeamServiceException(TeamError.ALREADY_IN_TEAM, "team_already_in_team");
         }
 
         TeamInvite inv;
@@ -219,13 +232,13 @@ public final class SimpleTeamService implements TeamService {
             inv = invites.get(invitee, id, now).orElse(null);
             if (inv == null) return Optional.empty();
         } else {
-            if (active.size() > 1) throw new IllegalStateException("MULTIPLE_INVITES");
+            if (active.size() > 1) throw new TeamServiceException(TeamError.MULTIPLE_INVITES, "team_multiple_invites_hint");
             inv = active.get(0);
         }
 
         if (inv.isExpired(now)) {
             invites.remove(invitee, inv.getTeamId());
-            throw new IllegalStateException("INVITE_EXPIRED");
+            throw new TeamServiceException(TeamError.INVITE_EXPIRED, "team_invite_expired");
         }
 
         Team t = teams.get(inv.getTeamId());
@@ -241,7 +254,7 @@ public final class SimpleTeamService implements TeamService {
         int currentSize = uniqueMemberCount(t);
 
         if (currentSize >= max) {
-            throw new IllegalStateException("TEAM_FULL");
+            throw new TeamServiceException(TeamError.TEAM_FULL, "team_team_full");
         }
 
         t.getMembers().add(invitee);
@@ -275,7 +288,7 @@ public final class SimpleTeamService implements TeamService {
         if (teamId != null && teamId.isPresent()) {
             return invites.remove(invitee, teamId.get());
         } else {
-            if (active.size() > 1) throw new IllegalStateException("MULTIPLE_INVITES");
+            if (active.size() > 1) throw new TeamServiceException(TeamError.MULTIPLE_INVITES, "team_multiple_invites_hint");
             return invites.remove(invitee, active.get(0).getTeamId());
         }
     }
@@ -325,7 +338,6 @@ public final class SimpleTeamService implements TeamService {
         Team team = getTeamByPlayer(sender.getUniqueId()).orElse(null);
         if (team == null) {
             teamChatToggled.remove(sender.getUniqueId());
-            // was hardcoded; now messages.yml-driven
             plugin.msg().send(sender, "team_not_in_team");
             return;
         }
@@ -419,9 +431,9 @@ public final class SimpleTeamService implements TeamService {
     }
 
     private String normalizeTeamNameOrThrow(String name) {
-        if (name == null) throw new IllegalStateException("Invalid team name");
+        if (name == null) throw new TeamServiceException(TeamError.INVALID_TEAM_NAME, "team_invalid_name");
         String cleaned = name.trim().replaceAll("\\s{2,}", " ");
-        if (cleaned.isBlank()) throw new IllegalStateException("Invalid team name");
+        if (cleaned.isBlank()) throw new TeamServiceException(TeamError.INVALID_TEAM_NAME, "team_invalid_name");
         return cleaned;
     }
 

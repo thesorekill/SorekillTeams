@@ -127,6 +127,9 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             // Recreate service to ensure a clean state (simple + reliable for patch releases)
             this.teams = new SimpleTeamService(this, storage);
             storage.loadAll(teams);
+
+            // Clean expired invites immediately after reload
+            invites.purgeExpiredAll(System.currentTimeMillis());
         } catch (Exception e) {
             getLogger().severe("Reload failed while loading teams. Current in-memory state may be incomplete.");
             getLogger().severe("Reason: " + e.getClass().getSimpleName() + ": " + e.getMessage());
@@ -219,7 +222,8 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     }
 
     private void stopTask(int taskId) {
-        if (taskId <= 0) return;
+        // ✅ 1.0.4: treat 0 as a valid id just in case (defensive)
+        if (taskId < 0) return;
         try {
             getServer().getScheduler().cancelTask(taskId);
         } catch (Exception ignored) {}

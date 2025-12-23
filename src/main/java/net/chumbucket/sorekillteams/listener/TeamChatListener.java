@@ -11,6 +11,8 @@
 package net.chumbucket.sorekillteams.listener;
 
 import net.chumbucket.sorekillteams.SorekillTeamsPlugin;
+import net.chumbucket.sorekillteams.service.TeamServiceException;
+import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
@@ -28,7 +30,7 @@ public final class TeamChatListener implements Listener {
     public void onChat(AsyncPlayerChatEvent event) {
         if (!plugin.getConfig().getBoolean("chat.enabled", true)) return;
 
-        var player = event.getPlayer();
+        final Player player = event.getPlayer();
 
         // Only intercept if they are in team chat mode
         if (!plugin.teams().isTeamChatEnabled(player.getUniqueId())) return;
@@ -36,9 +38,24 @@ public final class TeamChatListener implements Listener {
         // Cancel normal chat
         event.setCancelled(true);
 
-        final String msg = event.getMessage();
+        final String msgRaw = event.getMessage();
+        if (msgRaw == null) return;
+
+        final String msg = msgRaw.trim();
+        if (msg.isEmpty()) return;
 
         // IMPORTANT: AsyncPlayerChatEvent runs off-thread. Schedule team chat send on main thread.
-        plugin.getServer().getScheduler().runTask(plugin, () -> plugin.teams().sendTeamChat(player, msg));
+        plugin.getServer().getScheduler().runTask(plugin, () -> {
+            try {
+                plugin.teams().sendTeamChat(player, msg);
+            } catch (TeamServiceException ex) {
+                // Keep silent in chat (no spam), but log once for debugging.
+                plugin.getLogger().warning("TeamChatListener service error for " + player.getName() + ": " +
+                        (ex.code() == null ? "null" : ex.code().name()));
+            } catch (Exception ex) {
+                plugin.getLogger().severe("TeamChatListener error for " + player.getName() + ": " +
+                        ex.getClass().getSimpleName() + ": " + ex.getMessage());
+            }
+        });
     }
 }

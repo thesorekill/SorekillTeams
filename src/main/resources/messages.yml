@@ -10,6 +10,7 @@ prefix: "&8[&bSorekill Teams&8]&r "
 # =========================
 no_permission: "{prefix}&cYou don't have permission."
 player_only: "{prefix}&cThis command can only be used by players."
+invalid_player: "{prefix}&cInvalid player."
 
 reloaded: "{prefix}&aConfig reloaded."
 version: "{prefix}&7SorekillTeams &bv{version}&7 by &fSorekill&7."
@@ -18,22 +19,25 @@ unknown_command: "{prefix}&cUnknown subcommand."
 admin_usage: "{prefix}&7Use: /sorekillteams reload|version"
 
 # =========================
-# Team - General Errors (v1.0.2)
+# Team - Usage / Help
+# =========================
+team_usage: "{prefix}&7Use: /team create|invite|invites|accept|deny|leave|disband|info"
+team_create_usage: "{prefix}&7Usage: /team create <name>"
+team_invite_usage: "{prefix}&7Usage: /team invite <player>"
+team_invites_tip: "{prefix}&7Tip: /team accept <team> or /team deny <team>"
+
+# =========================
+# Team - Common Errors
 # =========================
 team_already_in_team: "{prefix}&cYou are already in a team."
+team_not_in_team: "{prefix}&cYou are not in a team."
 team_not_owner: "{prefix}&cOnly the team owner can do that."
+team_owner_cannot_leave: "{prefix}&cThe team owner cannot leave. Use &f/team disband&c."
+team_team_full: "{prefix}&cThat team is full."
+
 team_already_member: "{prefix}&cThat player is already a member of your team."
 team_invitee_in_team: "{prefix}&cThat player is already in a team."
 team_invite_self: "{prefix}&cYou can't invite yourself."
-
-# =========================
-# Team - Info
-# =========================
-team_info_header: "{prefix}&8&m-----&r &cTeam Info &8&m-----"
-team_info_name: "{prefix}&fTeam: &c{team}"
-team_info_owner: "{prefix}&fOwner: &c{owner}"
-team_info_members: "{prefix}&fMembers (&c{count}&f): &c{members}"
-team_not_in_team: "{prefix}&cYou are not in a team."
 
 # =========================
 # Team - Create / Disband
@@ -41,8 +45,13 @@ team_not_in_team: "{prefix}&cYou are not in a team."
 team_created: "{prefix}&fYou created the team &8&l(&c{team}&8&l)&f!"
 team_team_disbanded: "{prefix}&c{team} was disbanded."
 
+# Team name validation (used by TeamNameValidator)
 team_name_invalid: "{prefix}&cInvalid team name. Use letters/numbers/_ and only color (&0-&f) + bold (&l)."
 team_name_reserved: "{prefix}&cThat team name is too close to a rank/group name. Pick something else."
+
+# Service-level name errors (used by TeamServiceException)
+team_invalid_name: "{prefix}&cInvalid team name."
+team_name_taken: "{prefix}&cThat team name is already taken."
 
 # =========================
 # Team - Membership
@@ -51,33 +60,36 @@ team_joined: "{prefix}&aYou joined &c{team}&a!"
 team_joined_who: "{prefix}&7Invited by: &f{inviter}&7."
 team_left: "{prefix}&aYou left your team."
 
-team_team_full: "{prefix}&cThat team is full."
 team_member_joined: "{prefix}&a{player}&f joined {team}."
 team_member_left: "{prefix}&c{player}&f left {team}."
+
+# =========================
+# Team - Info
+# =========================
+team_info_header: "{prefix}&8&m-----&r &cTeam Info &8&m-----"
+team_info_name: "{prefix}&fTeam: &c{team}"
+team_info_owner: "{prefix}&fOwner: &c{owner}"
+team_info_members: "{prefix}&fMembers (&c{count}&f): &c{members}"
 
 # =========================
 # Team - Invites
 # =========================
 team_no_invites: "{prefix}&cYou have no pending team invites."
+team_invites_none: "{prefix}&cYou have no pending team invites."
+team_invites_header: "{prefix}&8&m-----&r &cTeam Invites &8&m-----"
+team_invites_entry: "{prefix}&fInvite: &c{team}&f from &c{inviter}&f (&7expires in &c{seconds}&7s&f)"
+
 team_invite_received: "{prefix}&f{inviter} has invited you to join the team &c{team}&f."
 team_invite_sent: "{prefix}&fInvited &c{target}&f to your team &c{team}&f."
+team_invite_player_offline: "{prefix}&cThat player is not online."
+
 team_invite_accepted_inviter: "{prefix}&a{player}&f accepted your invite and joined &c{team}&f."
 team_invite_denied: "{prefix}&aYou denied the team invite."
 team_invite_expired: "{prefix}&cThat invite has expired."
 team_invite_cooldown: "{prefix}&cYou must wait &f{seconds}&c seconds before inviting again."
 team_invite_already_pending: "{prefix}&cThat player already has a pending invite to your team."
-
-team_invites_header: "{prefix}&8&m-----&r &cTeam Invites &8&m-----"
-team_invites_none: "{prefix}&cYou have no pending team invites."
-team_invites_entry: "{prefix}&fInvite: &c{team}&f from &c{inviter}&f (&7expires in &c{seconds}&7s&f)"
-
-team_usage: "{prefix}&7Use: /team create|invite|invites|accept|deny|leave|info"
-team_create_usage: "{prefix}&7Usage: /team create <name>"
-team_invite_usage: "{prefix}&7Usage: /team invite <player>"
-team_invite_player_offline: "{prefix}&cThat player is not online."
 team_invite_no_match: "{prefix}&cNo invite matched that team. Use /team invites."
 team_multiple_invites_hint: "{prefix}&7You have multiple invites. Use /team invites then /team accept <team>."
-team_invites_tip: "{prefix}&7Tip: /team accept <team> or /team deny <team>"
 
 # =========================
 # Team Chat

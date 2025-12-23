@@ -13,6 +13,8 @@ package net.chumbucket.sorekillteams.command;
 import net.chumbucket.sorekillteams.SorekillTeamsPlugin;
 import net.chumbucket.sorekillteams.model.Team;
 import net.chumbucket.sorekillteams.model.TeamInvite;
+import net.chumbucket.sorekillteams.service.TeamError;
+import net.chumbucket.sorekillteams.service.TeamServiceException;
 import net.chumbucket.sorekillteams.util.Msg;
 import net.chumbucket.sorekillteams.util.TeamNameValidator;
 import org.bukkit.Bukkit;
@@ -114,7 +116,6 @@ public final class TeamCommand implements CommandExecutor {
                             "{team}", Msg.color(teamName)
                     );
 
-                    // Use your messages.yml keys instead of raw strings
                     plugin.msg().send(target, "team_usage");
                     plugin.msg().send(target, "team_invites_tip");
                     return true;
@@ -246,6 +247,17 @@ public final class TeamCommand implements CommandExecutor {
                     return true;
                 }
 
+                case "disband" -> {
+                    if (!p.hasPermission("sorekillteams.disband")) {
+                        plugin.msg().send(p, "no_permission");
+                        return true;
+                    }
+
+                    plugin.teams().disbandTeam(p.getUniqueId());
+                    // Service broadcasts to team; we don't need to double-message here
+                    return true;
+                }
+
                 case "info" -> {
                     if (!p.hasPermission("sorekillteams.info")) {
                         plugin.msg().send(p, "no_permission");
@@ -279,7 +291,7 @@ public final class TeamCommand implements CommandExecutor {
                     return true;
                 }
             }
-        } catch (IllegalStateException ex) {
+        } catch (TeamServiceException ex) {
             handleServiceError(p, ex);
             return true;
         } catch (Exception ex) {
@@ -289,58 +301,43 @@ public final class TeamCommand implements CommandExecutor {
         }
     }
 
-    private void handleServiceError(Player p, IllegalStateException ex) {
-        String m = ex.getMessage() == null ? "" : ex.getMessage();
-
-        if (m.equalsIgnoreCase("TEAM_FULL")) {
-            plugin.msg().send(p, "team_team_full");
-            return;
-        }
-        if (m.equalsIgnoreCase("INVITE_EXPIRED")) {
-            plugin.msg().send(p, "team_invite_expired");
-            return;
-        }
-        if (m.equalsIgnoreCase("MULTIPLE_INVITES")) {
-            plugin.msg().send(p, "team_multiple_invites_hint");
-            return;
-        }
-        if (m.equalsIgnoreCase("Already invited")) {
-            plugin.msg().send(p, "team_invite_already_pending");
+    private void handleServiceError(Player p, TeamServiceException ex) {
+        // If service provided a direct messages.yml key, use it.
+        if (ex.messageKey() != null && !ex.messageKey().isBlank()) {
+            plugin.msg().send(p, ex.messageKey(), ex.pairs());
             return;
         }
 
-        if (m.equalsIgnoreCase("Already in a team")) {
-            plugin.msg().send(p, "team_already_in_team");
-            return;
-        }
-        if (m.equalsIgnoreCase("Not in a team")) {
-            plugin.msg().send(p, "team_not_in_team");
-            return;
-        }
-        if (m.equalsIgnoreCase("Not owner")) {
-            plugin.msg().send(p, "team_not_owner");
-            return;
-        }
-        if (m.equalsIgnoreCase("Already a member")) {
-            plugin.msg().send(p, "team_already_member");
-            return;
-        }
-        if (m.equalsIgnoreCase("Invitee already in a team")) {
-            plugin.msg().send(p, "team_invitee_in_team");
-            return;
-        }
-        if (m.equalsIgnoreCase("You cannot invite yourself")) {
-            plugin.msg().send(p, "team_invite_self");
+        // Otherwise map by code (stable)
+        TeamError code = ex.code();
+        if (code == null) {
+            p.sendMessage(plugin.msg().prefix() + "You can't do that right now.");
             return;
         }
 
-        if (m.startsWith("&") || m.contains("{")) {
-            p.sendMessage(plugin.msg().prefix() + Msg.color(m));
-            return;
-        }
+        switch (code) {
+            case TEAM_FULL -> plugin.msg().send(p, "team_team_full");
+            case INVITE_EXPIRED -> plugin.msg().send(p, "team_invite_expired");
+            case MULTIPLE_INVITES -> plugin.msg().send(p, "team_multiple_invites_hint");
+            case INVITE_ALREADY_PENDING -> plugin.msg().send(p, "team_invite_already_pending");
 
-        p.sendMessage(plugin.msg().prefix() + "You can't do that right now.");
-        plugin.getLogger().warning("Service error shown to player " + p.getName() + ": " + m);
+            case ALREADY_IN_TEAM -> plugin.msg().send(p, "team_already_in_team");
+            case NOT_IN_TEAM -> plugin.msg().send(p, "team_not_in_team");
+            case NOT_OWNER, ONLY_OWNER_CAN_INVITE -> plugin.msg().send(p, "team_not_owner");
+            case ALREADY_MEMBER -> plugin.msg().send(p, "team_already_member");
+            case INVITEE_IN_TEAM -> plugin.msg().send(p, "team_invitee_in_team");
+            case INVITE_SELF -> plugin.msg().send(p, "team_invite_self");
+
+            case TEAM_NAME_TAKEN -> plugin.msg().send(p, "team_name_taken");
+            case INVALID_TEAM_NAME -> plugin.msg().send(p, "team_invalid_name");
+            case INVALID_PLAYER -> plugin.msg().send(p, "invalid_player");
+
+            case OWNER_CANNOT_LEAVE -> plugin.msg().send(p, "team_owner_cannot_leave");
+
+            case INVITE_COOLDOWN -> plugin.msg().send(p, "team_invite_cooldown"); // should normally come with pairs
+
+            default -> p.sendMessage(plugin.msg().prefix() + "You can't do that right now.");
+        }
     }
 
     private Optional<UUID> resolveInviteTeamIdByName(UUID invitee, String teamArgRaw) {
@@ -366,12 +363,14 @@ public final class TeamCommand implements CommandExecutor {
     }
 
     private String nameOf(UUID uuid) {
+        if (uuid == null) return "unknown";
+
         Player online = Bukkit.getPlayer(uuid);
         if (online != null) return online.getName();
 
         OfflinePlayer off = Bukkit.getOfflinePlayer(uuid);
         if (off != null && off.getName() != null && !off.getName().isBlank()) return off.getName();
 
-        return uuid == null ? "unknown" : uuid.toString().substring(0, 8);
+        return uuid.toString().substring(0, 8);
     }
 }

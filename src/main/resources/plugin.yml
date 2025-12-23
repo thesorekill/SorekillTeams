@@ -10,7 +10,7 @@ softdepend: [PlaceholderAPI, MiniPlaceholders]
 commands:
   team:
     description: Manage your team
-    usage: /team <create|invite|invites|accept|deny|leave|info>
+    usage: /team <create|invite|invites|accept|deny|leave|disband|info>
     aliases: [teams]
     permission: sorekillteams.use
 
@@ -38,6 +38,7 @@ permissions:
       sorekillteams.accept: true
       sorekillteams.deny: true
       sorekillteams.leave: true
+      sorekillteams.disband: true
       sorekillteams.chat: true
       sorekillteams.admin: true
       sorekillteams.reload: true
@@ -73,6 +74,10 @@ permissions:
 
   sorekillteams.leave:
     description: Leave your current team
+    default: true
+
+  sorekillteams.disband:
+    description: Disband your team (owner only)
     default: true
 
   sorekillteams.chat:
