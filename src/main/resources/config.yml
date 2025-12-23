@@ -1,6 +1,11 @@
 # =========================
 # SorekillTeams - config.yml
 # =========================
+# Plugin: https://github.com/thesorekill/SorekillTeams
+#
+# Notes:
+# - Most settings have sensible defaults. Only change what you need.
+# - If you break YAML formatting, the plugin may fail to load. Keep indentation consistent.
 
 update_checker:
   enabled: true
@@ -12,21 +17,38 @@ update_checker:
   notify_ops_on_join: true
 
 storage:
+  # Storage backend (currently: yaml)
   type: yaml
+
+  # How often team data is saved to disk (seconds)
   autosave_seconds: 60
+
+  # 1.0.8+ (recommended): safer writes to reduce corruption risk on crash
+  # If enabled, the plugin writes to a temp file first, then replaces the original.
+  atomic_writes: true
+
+  # 1.0.8+ (recommended): keep the last N backups when saving (0 disables)
+  keep_backups: 3
 
 teams:
   # Default max members if owner doesn't have a sorekillteams.max.<n> permission
   max_members_default: 4
 
+  # Team name rules
   name:
     min_length: 3
     max_length: 16
+
+    # Allowed characters (regex character class, without the surrounding brackets [])
+    # Example: "a-zA-Z0-9_" allows letters, numbers, underscore
     allowed_plain: "a-zA-Z0-9_"
+
+    # Formatting options (only applies if you allow color codes)
     allow_color_codes: true
     allow_bold: true
     allow_reset: true
 
+  # Block certain names (case-insensitive)
   reserved_names:
     enabled: true
     list:
@@ -37,13 +59,34 @@ teams:
       - "vip"
       - "default"
 
+  # Prevent look-alike reserved names (Levenshtein distance)
+  # Example: "adm1n" could be blocked if within distance
   reserved_match:
     levenshtein_distance: 2
 
 invites:
+  # How long invites last (seconds)
   expiry_seconds: 300
+
+  # Invite cooldown per inviter (seconds)
   cooldown_seconds: 10
+
+  # How often the plugin purges expired invites (seconds)
   purge_seconds: 60
+
+  # 1.0.8+ anti-spam controls
+  # Max pending invites a player can have at one time
+  max_pending_per_player: 5
+
+  # Max outgoing pending invites a team can have at one time
+  max_outgoing_per_team: 10
+
+  # If false, a player can only have invites from one team at a time
+  allow_multiple_from_different_teams: true
+
+  # If true and a player has multiple invites, force specifying which team to accept:
+  # /team accept <team>
+  accept_requires_team_id_when_multiple: true
 
 chat:
   enabled: true
@@ -51,21 +94,49 @@ chat:
   toggle_enabled: true
   debug: false
 
+  spy:
+    enabled: true
+    format: "&8[&cTEAM SPY&8] &8(&c{team}&8) &f{player}&8: &7{message}"
+
 friendly_fire:
-  enabled: false              # true = friendly fire allowed (no blocking)
+  # Friendly fire behavior:
+  # false = plugin will block damage between teammates
+  # true  = allow teammates to damage each other (no blocking)
+  enabled: false
+
+  # Whether to include certain damage sources when blocking is active
   include_projectiles: true
   include_area_effect_clouds: true
   include_explosives: true
+
+  # 1.0.8+ additional sources
+  include_potions: true     # splash + lingering potion damage
+  include_tridents: true
+
   message:
     enabled: true
     cooldown_ms: 1000
 
 homes:
   enabled: true
+
+  # Max homes unless player has permission overrides (if implemented)
   max_homes: 3
+
+  # Server name used for display/metadata on networks
   server_name: "survival"
+
+  # Warmup before teleporting (seconds)
   warmup_seconds: 0
+
+  # Cooldown between home teleports (seconds)
   cooldown_seconds: 5
+
+  # 1.0.8+ future-proofing for proxy networks (no effect unless implemented)
+  proxy_mode: false
+
+  # If true, prevent using homes created on a different server_name (when proxy_mode is used)
+  restrict_to_same_server: true
 
 integrations:
   placeholderapi: true

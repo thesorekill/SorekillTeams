@@ -26,6 +26,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class SimpleTeamService implements TeamService {
 
     private static final String MAX_PERM_PREFIX = "sorekillteams.max.";
+    private static final String SPY_PERMISSION = "sorekillteams.spy";
 
     private final SorekillTeamsPlugin plugin;
     private final TeamStorage storage;
@@ -40,6 +41,9 @@ public final class SimpleTeamService implements TeamService {
     // Invite cooldown: inviter -> next allowed timestamp (ms)
     private final Map<UUID, Long> inviteCooldownUntil = new ConcurrentHashMap<>();
 
+    // 1.0.8: spyPlayer -> teamIds they are spying on
+    private final Map<UUID, Set<UUID>> spyTargets = new ConcurrentHashMap<>();
+
     public SimpleTeamService(SorekillTeamsPlugin plugin, TeamStorage storage) {
         this.plugin = plugin;
         this.storage = storage;
@@ -50,7 +54,6 @@ public final class SimpleTeamService implements TeamService {
     public void putLoadedTeam(Team t) {
         if (t == null) return;
 
-        // Enforce invariants on load too
         ensureOwnerInMembers(t);
         dedupeMembers(t);
 
@@ -74,20 +77,30 @@ public final class SimpleTeamService implements TeamService {
     }
 
     @Override
+    public Optional<Team> getTeamByName(String teamName) {
+        if (teamName == null) return Optional.empty();
+        String norm = normalizeForCompare(teamName);
+        if (norm.isBlank()) return Optional.empty();
+
+        for (Team t : teams.values()) {
+            if (t == null || t.getName() == null) continue;
+            if (normalizeForCompare(t.getName()).equals(norm)) return Optional.of(t);
+        }
+        return Optional.empty();
+    }
+
+    @Override
     public Team createTeam(UUID owner, String name) {
         if (owner == null) throw new TeamServiceException(TeamError.INVALID_PLAYER, "invalid_player");
         if (playerToTeam.containsKey(owner)) throw new TeamServiceException(TeamError.ALREADY_IN_TEAM, "team_already_in_team");
 
         final String cleanName = normalizeTeamNameOrThrow(name);
 
-        // prevent duplicates by normalized name
         if (teamNameTaken(cleanName)) {
             throw new TeamServiceException(TeamError.TEAM_NAME_TAKEN, "team_name_taken");
         }
 
         UUID id = UUID.randomUUID();
-
-        // Team tracks createdAtMs internally (Team constructor sets it)
         Team t = new Team(id, cleanName, owner);
 
         ensureOwnerInMembers(t);
@@ -114,7 +127,6 @@ public final class SimpleTeamService implements TeamService {
                 "{team}", Msg.color(t.getName())
         ));
 
-        // Snapshot members to avoid concurrent modification
         Set<UUID> members = new HashSet<>(t.getMembers());
         for (UUID m : members) {
             if (m == null) continue;
@@ -123,11 +135,12 @@ public final class SimpleTeamService implements TeamService {
         }
 
         inviteCooldownUntil.remove(owner);
-
         teams.remove(t.getId());
 
-        // remove invites that point to this team
         invites.clearTeam(t.getId());
+
+        // 1.0.8: remove this team from any spy sets
+        removeTeamFromAllSpyTargets(t.getId());
 
         safeSave();
     }
@@ -174,7 +187,6 @@ public final class SimpleTeamService implements TeamService {
             throw new TeamServiceException(TeamError.ONLY_OWNER_CAN_INVITE, "team_not_owner");
         }
 
-        // ✅ 1.0.7: pre-check capacity (permission-based max for owner)
         int max = getTeamMaxMembers(t);
         if (uniqueMemberCount(t) >= max) {
             throw new TeamServiceException(TeamError.TEAM_FULL, "team_team_full");
@@ -183,7 +195,6 @@ public final class SimpleTeamService implements TeamService {
         if (t.isMember(invitee)) throw new TeamServiceException(TeamError.ALREADY_MEMBER, "team_already_member");
         if (playerToTeam.containsKey(invitee)) throw new TeamServiceException(TeamError.INVITEE_IN_TEAM, "team_invitee_in_team");
 
-        // Cooldown
         int cdSeconds = Math.max(0, plugin.getConfig().getInt("invites.cooldown_seconds", 10));
         long now = System.currentTimeMillis();
 
@@ -200,7 +211,6 @@ public final class SimpleTeamService implements TeamService {
             inviteCooldownUntil.put(inviter, now + (cdSeconds * 1000L));
         }
 
-        // Expiry
         int expirySeconds = Math.max(1, plugin.getConfig().getInt("invites.expiry_seconds", 300));
         long expiresAt = now + (expirySeconds * 1000L);
 
@@ -258,7 +268,6 @@ public final class SimpleTeamService implements TeamService {
         ensureOwnerInMembers(t);
         dedupeMembers(t);
 
-        // ✅ 1.0.7: permission-based max for owner
         int max = getTeamMaxMembers(t);
         int currentSize = uniqueMemberCount(t);
 
@@ -317,7 +326,6 @@ public final class SimpleTeamService implements TeamService {
         return ta != null && ta.equals(tb);
     }
 
-    // 1.0.6: kick member (owner only)
     @Override
     public void kickMember(UUID owner, UUID member) {
         if (owner == null || member == null) throw new TeamServiceException(TeamError.INVALID_PLAYER, "invalid_player");
@@ -328,7 +336,6 @@ public final class SimpleTeamService implements TeamService {
         if (!t.getOwner().equals(owner)) throw new TeamServiceException(TeamError.NOT_OWNER, "team_not_owner");
 
         if (member.equals(t.getOwner())) throw new TeamServiceException(TeamError.CANNOT_KICK_OWNER, "team_cannot_kick_owner");
-
         if (!t.isMember(member)) throw new TeamServiceException(TeamError.TARGET_NOT_MEMBER, "team_kick_not_member");
 
         t.getMembers().remove(member);
@@ -350,7 +357,6 @@ public final class SimpleTeamService implements TeamService {
         ));
     }
 
-    // 1.0.6: transfer ownership (owner -> member)
     @Override
     public void transferOwnership(UUID owner, UUID newOwner) {
         if (owner == null || newOwner == null) throw new TeamServiceException(TeamError.INVALID_PLAYER, "invalid_player");
@@ -361,7 +367,6 @@ public final class SimpleTeamService implements TeamService {
         if (!t.getOwner().equals(owner)) throw new TeamServiceException(TeamError.NOT_OWNER, "team_not_owner");
 
         if (owner.equals(newOwner)) throw new TeamServiceException(TeamError.TRANSFER_SELF, "team_transfer_self");
-
         if (!t.isMember(newOwner)) throw new TeamServiceException(TeamError.TARGET_NOT_MEMBER, "team_target_not_member");
 
         t.setOwner(newOwner);
@@ -378,7 +383,6 @@ public final class SimpleTeamService implements TeamService {
         ));
     }
 
-    // ✅ 1.0.7: rename team (owner only)
     @Override
     public void renameTeam(UUID owner, String newName) {
         if (owner == null) throw new TeamServiceException(TeamError.INVALID_PLAYER, "invalid_player");
@@ -390,12 +394,10 @@ public final class SimpleTeamService implements TeamService {
 
         String cleaned = normalizeTeamNameOrThrow(newName);
 
-        // If name is effectively the same, no-op (still "success")
         if (normalizeForCompare(t.getName()).equals(normalizeForCompare(cleaned))) {
             return;
         }
 
-        // Check taken excluding our team
         if (teamNameTakenByOtherTeam(cleaned, t.getId())) {
             throw new TeamServiceException(TeamError.TEAM_NAME_TAKEN, "team_name_taken");
         }
@@ -459,7 +461,6 @@ public final class SimpleTeamService implements TeamService {
                 "chat.format",
                 "&8&l(&c&l{team}&8&l) &f{player} &8&l> &c{message}"
         );
-
         if (fmt == null || fmt.isBlank()) {
             fmt = "&8&l(&c&l{team}&8&l) &f{player} &8&l> &c{message}";
         }
@@ -474,6 +475,104 @@ public final class SimpleTeamService implements TeamService {
         );
 
         broadcastToTeam(team, out);
+
+        // 1.0.8: spy broadcast (read-only / opt-in per team)
+        broadcastToSpy(team, sender.getUniqueId(), sender.getName(), coloredMsg);
+    }
+
+    // =========================
+    // 1.0.8: Spy API
+    // =========================
+
+    @Override
+    public boolean toggleSpy(UUID spyPlayer, UUID teamId) {
+        if (spyPlayer == null || teamId == null) return false;
+
+        Team t = teams.get(teamId);
+        if (t == null) return false;
+
+        Set<UUID> set = spyTargets.computeIfAbsent(spyPlayer, __ -> ConcurrentHashMap.newKeySet());
+        if (set.contains(teamId)) {
+            set.remove(teamId);
+            if (set.isEmpty()) spyTargets.remove(spyPlayer);
+            return false;
+        }
+
+        set.add(teamId);
+        return true;
+    }
+
+    @Override
+    public void clearSpy(UUID spyPlayer) {
+        if (spyPlayer == null) return;
+        spyTargets.remove(spyPlayer);
+    }
+
+    @Override
+    public Collection<Team> getSpiedTeams(UUID spyPlayer) {
+        if (spyPlayer == null) return List.of();
+        Set<UUID> set = spyTargets.get(spyPlayer);
+        if (set == null || set.isEmpty()) return List.of();
+
+        List<Team> out = new ArrayList<>();
+        for (UUID id : set) {
+            Team t = teams.get(id);
+            if (t != null) out.add(t);
+        }
+
+        out.sort(Comparator.comparing(a -> normalizeForCompare(a.getName())));
+        return out;
+    }
+
+    private void broadcastToSpy(Team team, UUID senderUuid, String senderName, String coloredMessage) {
+        if (team == null) return;
+
+        if (!plugin.getConfig().getBoolean("chat.spy.enabled", true)) return;
+
+        String spyFmt = plugin.getConfig().getString(
+                "chat.spy.format",
+                "&8[&cTEAM SPY&8] &8(&c{team}&8) &f{player}&8: &7{message}"
+        );
+        if (spyFmt == null || spyFmt.isBlank()) {
+            spyFmt = "&8[&cTEAM SPY&8] &8(&c{team}&8) &f{player}&8: &7{message}";
+        }
+
+        String spyOut = Msg.color(
+                spyFmt.replace("{team}", Msg.color(team.getName()))
+                        .replace("{player}", (senderName == null ? "unknown" : senderName))
+                        .replace("{message}", (coloredMessage == null ? "" : coloredMessage))
+        );
+
+        UUID teamId = team.getId();
+
+        for (Player p : Bukkit.getOnlinePlayers()) {
+            if (p == null) continue;
+            if (!p.hasPermission(SPY_PERMISSION)) continue;
+
+            UUID spyUuid = p.getUniqueId();
+            if (spyUuid == null) continue;
+
+            // Don’t send spy output to actual members (they already see team chat)
+            if (areTeammates(spyUuid, senderUuid)) continue;
+
+            Set<UUID> watching = spyTargets.get(spyUuid);
+            if (watching == null || watching.isEmpty()) continue;
+            if (!watching.contains(teamId)) continue;
+
+            p.sendMessage(spyOut);
+        }
+    }
+
+    private void removeTeamFromAllSpyTargets(UUID teamId) {
+        if (teamId == null) return;
+
+        for (Map.Entry<UUID, Set<UUID>> e : spyTargets.entrySet()) {
+            Set<UUID> set = e.getValue();
+            if (set == null) continue;
+            set.remove(teamId);
+        }
+
+        spyTargets.entrySet().removeIf(e -> e.getValue() == null || e.getValue().isEmpty());
     }
 
     public Collection<Team> allTeams() {
@@ -573,17 +672,15 @@ public final class SimpleTeamService implements TeamService {
         return s.trim().toLowerCase(Locale.ROOT).replaceAll("\\s{2,}", " ");
     }
 
-    // ✅ 1.0.7: permission-based max members for team owner
     private int getTeamMaxMembers(Team team) {
         int def = Math.max(1, plugin.getConfig().getInt("teams.max_members_default", 4));
         if (team == null || team.getOwner() == null) return def;
 
         Player ownerOnline = Bukkit.getPlayer(team.getOwner());
-        if (ownerOnline == null) return def; // offline owner -> fallback
+        if (ownerOnline == null) return def;
 
         int best = def;
 
-        // Scan effective permissions for sorekillteams.max.N
         for (PermissionAttachmentInfo pai : ownerOnline.getEffectivePermissions()) {
             if (pai == null || !pai.getValue()) continue;
             String perm = pai.getPermission();
@@ -595,7 +692,7 @@ public final class SimpleTeamService implements TeamService {
 
             try {
                 int n = Integer.parseInt(num);
-                if (n >= 1 && n <= 200) { // reasonable cap to avoid accidents
+                if (n >= 1 && n <= 200) {
                     if (n > best) best = n;
                 }
             } catch (NumberFormatException ignored) {}

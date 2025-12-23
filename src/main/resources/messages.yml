@@ -21,7 +21,7 @@ admin_usage: "{prefix}&7Use: /sorekillteams reload|version"
 # =========================
 # Team - Usage / Help
 # =========================
-team_usage: "{prefix}&7Use: /team create|invite|invites|accept|deny|leave|disband|info|ff|kick|transfer|rename"
+team_usage: "{prefix}&7Use: /team create|invite|invites|accept|deny|leave|disband|info|ff|kick|transfer|rename|spy"
 team_create_usage: "{prefix}&7Usage: /team create <name>"
 team_invite_usage: "{prefix}&7Usage: /team invite <player>"
 team_invites_tip: "{prefix}&7Tip: /team accept <team> or /team deny <team>"
@@ -29,6 +29,9 @@ team_invites_tip: "{prefix}&7Tip: /team accept <team> or /team deny <team>"
 team_kick_usage: "{prefix}&7Usage: /team kick <player>"
 team_transfer_usage: "{prefix}&7Usage: /team transfer <player>"
 team_rename_usage: "{prefix}&7Usage: /team rename <name>"
+
+# Team Spy (1.0.8)
+team_spy_usage: "{prefix}&7Usage: /team spy <team> | /team spy list | /team spy off"
 
 # =========================
 # Team - Common Errors
@@ -47,6 +50,10 @@ team_target_not_member: "{prefix}&cThat player is not in your team."
 team_cannot_kick_owner: "{prefix}&cYou can't kick the team owner."
 team_transfer_self: "{prefix}&cYou are already the owner."
 team_player_must_be_online_or_uuid: "{prefix}&cThat player must be online, or provide their UUID."
+
+# Spy errors/status (1.0.8)
+team_spy_disabled: "{prefix}&cTeam spy is disabled."
+team_spy_team_not_found: "{prefix}&cTeam not found: &f{team}"
 
 # =========================
 # Team - Create / Disband
@@ -67,7 +74,6 @@ team_name_taken: "{prefix}&cThat team name is already taken."
 # =========================
 team_renamed: "{prefix}&aRenamed team from &c{old}&a to &c{team}&a."
 team_renamed_broadcast: "{prefix}&eTeam renamed to &c{team}&e by &f{by}&e."
-
 
 # =========================
 # Team - Membership
@@ -127,6 +133,15 @@ teamchat_disabled: "{prefix}&cTeam chat is disabled."
 teamchat_toggle_disabled: "{prefix}&cTeam chat toggle is disabled. Use &f/tc <message>&c."
 teamchat_on: "{prefix}&aTeam chat: &fON"
 teamchat_off: "{prefix}&cTeam chat: &fOFF"
+
+# =========================
+# Team Spy (1.0.8)
+# =========================
+team_spy_list_empty: "{prefix}&7You are not spying on any teams."
+team_spy_list: "{prefix}&7Spying on: &c{teams}"
+team_spy_cleared: "{prefix}&aSpy cleared."
+team_spy_on: "{prefix}&aNow spying on &c{team}&a."
+team_spy_off: "{prefix}&cStopped spying on &c{team}&c."
 
 # =========================
 # Friendly Fire (Combat)
