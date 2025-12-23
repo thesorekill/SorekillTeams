@@ -64,6 +64,27 @@
   <build>
     <finalName>${project.artifactId}-${project.version}</finalName>
 
+    <!-- IMPORTANT: filter only plugin.yml so version comes from pom.xml -->
+    <resources>
+      <!-- Copy all resources normally -->
+      <resource>
+        <directory>src/main/resources</directory>
+        <filtering>false</filtering>
+        <excludes>
+          <exclude>plugin.yml</exclude>
+        </excludes>
+      </resource>
+
+      <!-- Filter ONLY plugin.yml -->
+      <resource>
+        <directory>src/main/resources</directory>
+        <filtering>true</filtering>
+        <includes>
+          <include>plugin.yml</include>
+        </includes>
+      </resource>
+    </resources>
+
     <plugins>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>

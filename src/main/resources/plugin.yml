@@ -1,5 +1,5 @@
 name: SorekillTeams
-version: 1.0.0
+version: ${project.version}
 main: net.chumbucket.sorekillteams.SorekillTeamsPlugin
 api-version: 1.21
 author: Sorekill
