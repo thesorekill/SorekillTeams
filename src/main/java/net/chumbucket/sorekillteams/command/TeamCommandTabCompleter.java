@@ -35,8 +35,6 @@ public final class TeamCommandTabCompleter implements TabCompleter {
         if (!(sender instanceof Player p)) return List.of();
         if (!p.hasPermission("sorekillteams.use")) return List.of();
 
-        plugin.getLogger().info("TabComplete /team args=" + Arrays.toString(args));
-
         // /team <sub>
         if (args.length == 1) {
             return partial(args[0], subcommandsFor(p));
@@ -74,9 +72,28 @@ public final class TeamCommandTabCompleter implements TabCompleter {
             if (sub.equals("accept") && !p.hasPermission("sorekillteams.accept")) return List.of();
             if (sub.equals("deny") && !p.hasPermission("sorekillteams.deny")) return List.of();
 
-            // Suggestions should be invite team names (supports multi-word by joining args)
             String joined = String.join(" ", Arrays.copyOfRange(args, 1, args.length)).trim();
             return partial(joined, inviteTeamNames(p.getUniqueId()));
+        }
+
+        // /team spy <team... | list | off | clear>
+        if (sub.equals("spy")) {
+            if (!p.hasPermission("sorekillteams.spy")) return List.of();
+
+            String joined = String.join(" ", Arrays.copyOfRange(args, 1, args.length)).trim();
+
+            // First argument: show keywords + team names
+            if (args.length >= 2) {
+                List<String> options = new ArrayList<>();
+                options.add("list");
+                options.add("off");
+                options.add("clear");
+
+                // Add team names for convenience (multi-word supported by our 'joined' matching)
+                options.addAll(allTeamNames());
+
+                return partial(joined, options);
+            }
         }
 
         // /team rename <...> (no good suggestions)
@@ -86,7 +103,6 @@ public final class TeamCommandTabCompleter implements TabCompleter {
     private List<String> subcommandsFor(Player p) {
         List<String> subs = new ArrayList<>();
 
-        // Always show help-ish commands if they can use /team
         if (p.hasPermission("sorekillteams.create")) subs.add("create");
         if (p.hasPermission("sorekillteams.invite")) subs.add("invite");
         if (p.hasPermission("sorekillteams.invites")) subs.add("invites");
@@ -100,7 +116,9 @@ public final class TeamCommandTabCompleter implements TabCompleter {
         if (p.hasPermission("sorekillteams.transfer")) subs.add("transfer");
         if (p.hasPermission("sorekillteams.rename")) subs.add("rename");
 
-        // Stable ordering
+        // 1.0.8
+        if (p.hasPermission("sorekillteams.spy")) subs.add("spy");
+
         return subs.stream().distinct().sorted(String.CASE_INSENSITIVE_ORDER).toList();
     }
 
@@ -118,7 +136,6 @@ public final class TeamCommandTabCompleter implements TabCompleter {
         Collection<TeamInvite> invs = plugin.teams().getInvites(invitee);
         if (invs == null || invs.isEmpty()) return List.of();
 
-        // Prefer current live team name if team still exists; fallback to stored invite name.
         return invs.stream()
                 .map(inv -> plugin.teams().getTeamById(inv.getTeamId())
                         .map(Team::getName)
@@ -127,6 +144,33 @@ public final class TeamCommandTabCompleter implements TabCompleter {
                 .distinct()
                 .sorted(String.CASE_INSENSITIVE_ORDER)
                 .toList();
+    }
+
+    private List<String> allTeamNames() {
+        // Best-effort: if you ever change internal storage, this won't crash.
+        try {
+            // SimpleTeamService exposes allTeams(); but TeamService doesn't.
+            // So we can only safely enumerate if the runtime service actually has that method.
+            // If not available, just return empty list.
+            var svc = plugin.teams();
+            try {
+                var m = svc.getClass().getMethod("allTeams");
+                Object res = m.invoke(svc);
+                if (res instanceof Collection<?> col) {
+                    List<String> names = new ArrayList<>();
+                    for (Object o : col) {
+                        if (o instanceof Team t) {
+                            if (t.getName() != null && !t.getName().isBlank()) names.add(t.getName());
+                        }
+                    }
+                    return names.stream().distinct().sorted(String.CASE_INSENSITIVE_ORDER).toList();
+                }
+            } catch (NoSuchMethodException ignored) {
+                // no enumeration available
+            }
+        } catch (Exception ignored) {}
+
+        return List.of();
     }
 
     private List<String> partial(String token, Collection<String> options) {

@@ -23,6 +23,9 @@ public interface TeamService {
     Optional<Team> getTeamByPlayer(UUID player);
     Optional<Team> getTeamById(UUID teamId);
 
+    // 1.0.8: find a team by name (case-insensitive, whitespace-normalized)
+    Optional<Team> getTeamByName(String teamName);
+
     Team createTeam(UUID owner, String name);
 
     void disbandTeam(UUID owner);
@@ -38,18 +41,21 @@ public interface TeamService {
 
     boolean areTeammates(UUID a, UUID b);
 
-    // Team chat toggle mode
+    void kickMember(UUID owner, UUID member);
+    void transferOwnership(UUID owner, UUID newOwner);
+
+    void renameTeam(UUID owner, String newName);
+
     boolean isTeamChatEnabled(UUID player);
     void setTeamChatEnabled(UUID player, boolean enabled);
     boolean toggleTeamChat(UUID player);
 
-    // Send a message to the sender's team chat
     void sendTeamChat(Player sender, String message);
 
-    // 1.0.6 additions
-    void kickMember(UUID owner, UUID member);
-    void transferOwnership(UUID owner, UUID newOwner);
-
-    // ✅ 1.0.7 additions
-    void renameTeam(UUID owner, String newName);
+    // =========================
+    // 1.0.8: Team Spy (per-team)
+    // =========================
+    boolean toggleSpy(UUID spyPlayer, UUID teamId);
+    void clearSpy(UUID spyPlayer);
+    Collection<Team> getSpiedTeams(UUID spyPlayer);
 }

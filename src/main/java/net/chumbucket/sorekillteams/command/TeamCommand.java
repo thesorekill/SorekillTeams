@@ -39,6 +39,8 @@ public final class TeamCommand implements CommandExecutor {
     private static final DateTimeFormatter TEAM_CREATED_FMT =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm z").withZone(ZoneId.systemDefault());
 
+    private static final String SPY_PERMISSION = "sorekillteams.spy";
+
     public TeamCommand(SorekillTeamsPlugin plugin) {
         this.plugin = plugin;
         this.nameValidator = new TeamNameValidator(plugin);
@@ -66,6 +68,80 @@ public final class TeamCommand implements CommandExecutor {
 
         try {
             switch (sub) {
+
+                // =========================
+                // 1.0.8: /team spy ...
+                // =========================
+                case "spy" -> {
+                    if (!p.hasPermission(SPY_PERMISSION)) {
+                        plugin.msg().send(p, "no_permission");
+                        return true;
+                    }
+
+                    if (!plugin.getConfig().getBoolean("chat.spy.enabled", true)) {
+                        plugin.msg().send(p, "team_spy_disabled");
+                        return true;
+                    }
+
+                    if (args.length < 2) {
+                        plugin.msg().send(p, "team_spy_usage");
+                        return true;
+                    }
+
+                    String arg1 = args[1].trim();
+
+                    if (arg1.equalsIgnoreCase("list")) {
+                        Collection<Team> spied = plugin.teams().getSpiedTeams(p.getUniqueId());
+                        if (spied.isEmpty()) {
+                            plugin.msg().send(p, "team_spy_list_empty");
+                            return true;
+                        }
+
+                        String joined = spied.stream()
+                                .filter(Objects::nonNull)
+                                .map(t -> Msg.color(t.getName()))
+                                .collect(Collectors.joining(", "));
+
+                        plugin.msg().send(p, "team_spy_list",
+                                "{teams}", Msg.color(joined)
+                        );
+                        return true;
+                    }
+
+                    if (arg1.equalsIgnoreCase("off") || arg1.equalsIgnoreCase("clear")) {
+                        plugin.teams().clearSpy(p.getUniqueId());
+                        plugin.msg().send(p, "team_spy_cleared");
+                        return true;
+                    }
+
+                    String teamNameRaw = joinArgsAfter(args, 1);
+                    Team team = plugin.teams().getTeamByName(teamNameRaw).orElse(null);
+                    if (team == null) {
+                        plugin.msg().send(p, "team_spy_team_not_found",
+                                "{team}", teamNameRaw
+                        );
+                        return true;
+                    }
+
+                    boolean enabled = plugin.teams().toggleSpy(p.getUniqueId(), team.getId());
+                    if (enabled) {
+                        plugin.msg().send(p, "team_spy_on",
+                                "{team}", Msg.color(team.getName())
+                        );
+                    } else {
+                        plugin.msg().send(p, "team_spy_off",
+                                "{team}", Msg.color(team.getName())
+                        );
+                    }
+
+                    if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " spy toggled team=" + team.getName() + " -> " + (enabled ? "ON" : "OFF"));
+                    return true;
+                }
+
+                // -------------------------
+                // existing cases (unchanged)
+                // -------------------------
+
                 case "create" -> {
                     if (!p.hasPermission("sorekillteams.create")) {
                         plugin.msg().send(p, "no_permission");
@@ -276,7 +352,6 @@ public final class TeamCommand implements CommandExecutor {
                     return true;
                 }
 
-                // ✅ 1.0.7: rename (owner only)
                 case "rename" -> {
                     if (!p.hasPermission("sorekillteams.rename")) {
                         plugin.msg().send(p, "no_permission");
@@ -311,7 +386,6 @@ public final class TeamCommand implements CommandExecutor {
                     return true;
                 }
 
-                // Option A: online name OR UUID only
                 case "kick" -> {
                     if (!p.hasPermission("sorekillteams.kick")) {
                         plugin.msg().send(p, "no_permission");
@@ -351,7 +425,6 @@ public final class TeamCommand implements CommandExecutor {
                     return true;
                 }
 
-                // Option A: online name OR UUID only
                 case "transfer" -> {
                     if (!p.hasPermission("sorekillteams.transfer")) {
                         plugin.msg().send(p, "no_permission");
@@ -503,7 +576,6 @@ public final class TeamCommand implements CommandExecutor {
                 }
             }
         } catch (TeamServiceException ex) {
-            // ✅ centralized mapping (same behavior everywhere)
             CommandErrors.send(p, plugin, ex);
 
             if (debug) {
@@ -553,23 +625,30 @@ public final class TeamCommand implements CommandExecutor {
         return uuid.toString().substring(0, 8);
     }
 
-    /**
-     * Option A (Spigot-safe): resolve either:
-     * - a UUID string (offline-safe)
-     * - an online player name (must be online)
-     */
     private UUID resolvePlayerUuidOnlineOrUuid(String arg) {
         if (arg == null || arg.isBlank()) return null;
 
-        // UUID input
         try {
             return UUID.fromString(arg);
         } catch (IllegalArgumentException ignored) {}
 
-        // Online name only
         Player online = Bukkit.getPlayerExact(arg);
         if (online != null) return online.getUniqueId();
 
         return null;
+    }
+
+    // join args AFTER index (e.g. after "spy")
+    private String joinArgsAfter(String[] args, int indexOfSubcommand) {
+        int start = Math.max(0, indexOfSubcommand + 1);
+        StringBuilder sb = new StringBuilder();
+        for (int i = start; i < args.length; i++) {
+            if (args[i] == null) continue;
+            String s = args[i].trim();
+            if (s.isEmpty()) continue;
+            if (sb.length() > 0) sb.append(' ');
+            sb.append(s);
+        }
+        return sb.toString().trim();
     }
 }
