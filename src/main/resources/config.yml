@@ -16,6 +16,7 @@ storage:
   autosave_seconds: 60
 
 teams:
+  # Default max members if owner doesn't have a sorekillteams.max.<n> permission
   max_members_default: 4
 
   name:
@@ -48,6 +49,7 @@ chat:
   enabled: true
   format: "&8&l(&c&l{team}&8&l) &f{player} &8&l> &c{message}"
   toggle_enabled: true
+  debug: false
 
 friendly_fire:
   enabled: false              # true = friendly fire allowed (no blocking)

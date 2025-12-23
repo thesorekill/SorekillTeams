@@ -12,11 +12,14 @@ package net.chumbucket.sorekillteams.listener;
 
 import net.chumbucket.sorekillteams.SorekillTeamsPlugin;
 import net.chumbucket.sorekillteams.service.TeamServiceException;
+import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.AsyncPlayerChatEvent;
+
+import java.util.UUID;
 
 public final class TeamChatListener implements Listener {
 
@@ -30,10 +33,15 @@ public final class TeamChatListener implements Listener {
     public void onChat(AsyncPlayerChatEvent event) {
         if (!plugin.getConfig().getBoolean("chat.enabled", true)) return;
 
+        // Async thread context
         final Player player = event.getPlayer();
+        final UUID uuid = player.getUniqueId();
+        final String name = player.getName();
 
         // Only intercept if they are in team chat mode
-        if (!plugin.teams().isTeamChatEnabled(player.getUniqueId())) return;
+        if (!plugin.teams().isTeamChatEnabled(uuid)) return;
+
+        final boolean debug = plugin.getConfig().getBoolean("chat.debug", false);
 
         // Cancel normal chat
         event.setCancelled(true);
@@ -44,16 +52,41 @@ public final class TeamChatListener implements Listener {
         final String msg = msgRaw.trim();
         if (msg.isEmpty()) return;
 
-        // IMPORTANT: AsyncPlayerChatEvent runs off-thread. Schedule team chat send on main thread.
+        if (debug) {
+            plugin.getLogger().info("[TC-DBG] intercept " + name + " len=" + msg.length());
+        }
+
+        // IMPORTANT: schedule on main thread; do NOT capture Player from async thread
         plugin.getServer().getScheduler().runTask(plugin, () -> {
             try {
-                plugin.teams().sendTeamChat(player, msg);
+                // Player might have left
+                Player live = Bukkit.getPlayer(uuid);
+                if (live == null) {
+                    if (debug) plugin.getLogger().info("[TC-DBG] abort send (offline) " + name);
+                    return;
+                }
+
+                // They might have toggled team chat off between intercept and now
+                if (!plugin.teams().isTeamChatEnabled(uuid)) {
+                    if (debug) plugin.getLogger().info("[TC-DBG] abort send (toggle off) " + name);
+                    return;
+                }
+
+                plugin.teams().sendTeamChat(live, msg);
+
+                if (debug) {
+                    plugin.getLogger().info("[TC-DBG] sent teamchat from " + name);
+                }
+
             } catch (TeamServiceException ex) {
-                // Keep silent in chat (no spam), but log once for debugging.
-                plugin.getLogger().warning("TeamChatListener service error for " + player.getName() + ": " +
-                        (ex.code() == null ? "null" : ex.code().name()));
+                String code = (ex.code() == null ? "null" : ex.code().name());
+                if (debug) {
+                    plugin.getLogger().warning("[TC-DBG] TeamChatListener service error for " + name + ": " + code);
+                } else {
+                    plugin.getLogger().warning("TeamChatListener service error for " + name + ": " + code);
+                }
             } catch (Exception ex) {
-                plugin.getLogger().severe("TeamChatListener error for " + player.getName() + ": " +
+                plugin.getLogger().severe("TeamChatListener error for " + name + ": " +
                         ex.getClass().getSimpleName() + ": " + ex.getMessage());
             }
         });

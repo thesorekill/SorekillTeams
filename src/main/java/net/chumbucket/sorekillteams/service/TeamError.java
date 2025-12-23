@@ -33,8 +33,12 @@ public enum TeamError {
 
     INVITE_COOLDOWN,
 
-    // ✅ 1.0.6 additions (kick / transfer)
+    // 1.0.6 additions (kick / transfer)
     TARGET_NOT_MEMBER,
     CANNOT_KICK_OWNER,
-    TRANSFER_SELF
+    TRANSFER_SELF,
+
+    // 1.0.7 additions
+    RENAME_SELF_SAME_NAME,
+    RENAME_NOT_OWNER
 }
