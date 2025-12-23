@@ -1,8 +1,8 @@
 # =========================
 # SorekillTeams - messages.yml
 # =========================
+# Color codes: use '&' codes (ex: &c red, &a green, &l bold, &r reset)
 
-# Prefix used in most messages via {prefix}
 prefix: "&8[&bSorekill Teams&8]&r "
 
 # =========================
@@ -21,10 +21,15 @@ admin_usage: "{prefix}&7Use: /sorekillteams reload|version"
 # =========================
 # Team - Usage / Help
 # =========================
-team_usage: "{prefix}&7Use: /team create|invite|invites|accept|deny|leave|disband|info|ff"
+team_usage: "{prefix}&7Use: /team create|invite|invites|accept|deny|leave|disband|info|ff|kick|transfer"
+
 team_create_usage: "{prefix}&7Usage: /team create <name>"
 team_invite_usage: "{prefix}&7Usage: /team invite <player>"
 team_invites_tip: "{prefix}&7Tip: /team accept <team> or /team deny <team>"
+
+# Option A: online name OR UUID
+team_kick_usage: "{prefix}&7Usage: /team kick <player|uuid>"
+team_transfer_usage: "{prefix}&7Usage: /team transfer <player|uuid>"
 
 # =========================
 # Team - Common Errors
@@ -39,18 +44,24 @@ team_already_member: "{prefix}&cThat player is already a member of your team."
 team_invitee_in_team: "{prefix}&cThat player is already in a team."
 team_invite_self: "{prefix}&cYou can't invite yourself."
 
+# Kick / Transfer (service errors)
+team_target_not_member: "{prefix}&cThat player is not in your team."
+team_kick_not_member: "{prefix}&cThat player is not in your team."
+team_cannot_kick_owner: "{prefix}&cYou can't kick the team owner."
+team_transfer_self: "{prefix}&cYou are already the owner."
+team_player_must_be_online_or_uuid: "{prefix}&cThat player must be online, or provide their UUID."
+
 # =========================
 # Team - Create / Disband
 # =========================
 team_created: "{prefix}&fYou created the team &8&l(&c&l{team}&8&l)&f!"
-
 team_team_disbanded: "{prefix}&c{team} was disbanded."
 
-# Team name validation (used by TeamNameValidator)
+# Team name validation (TeamNameValidator)
 team_name_invalid: "{prefix}&cInvalid team name. Use letters/numbers/_ and only color (&0-&f) + bold (&l)."
 team_name_reserved: "{prefix}&cThat team name is too close to a rank/group name. Pick something else."
 
-# Service-level name errors (used by TeamServiceException)
+# Service-level name errors
 team_invalid_name: "{prefix}&cInvalid team name."
 team_name_taken: "{prefix}&cThat team name is already taken."
 
@@ -63,6 +74,17 @@ team_left: "{prefix}&aYou left your team."
 
 team_member_joined: "{prefix}&a{player}&f joined {team}."
 team_member_left: "{prefix}&c{player}&f left {team}."
+
+# =========================
+# Team - Kick / Transfer
+# =========================
+team_kick_success: "{prefix}&aKicked &f{player}&a from &c{team}&a."
+team_kick_target: "{prefix}&cYou were kicked from &c{team}&c by &f{by}&c."
+team_member_kicked_broadcast: "{prefix}&c{player}&f was kicked from {team}."
+
+team_transfer_success: "{prefix}&aTransferred ownership of &c{team}&a to &f{player}&a."
+team_transfer_received: "{prefix}&aYou are now the owner of &c{team}&a (transferred by &f{by}&a)."
+team_owner_transferred_broadcast: "{prefix}&fTeam owner is now &c{owner}&f."
 
 # =========================
 # Team - Info

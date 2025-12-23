@@ -4,13 +4,12 @@ main: net.chumbucket.sorekillteams.SorekillTeamsPlugin
 api-version: 1.21
 author: Sorekill
 
-# Optional integrations
 softdepend: [PlaceholderAPI, MiniPlaceholders]
 
 commands:
   team:
     description: Manage your team
-    usage: /team <create|invite|invites|accept|deny|leave|disband|info>
+    usage: /team <create|invite|invites|accept|deny|leave|disband|info|ff|kick|transfer>
     aliases: [teams]
     permission: sorekillteams.use
 
@@ -41,6 +40,8 @@ permissions:
       sorekillteams.disband: true
       sorekillteams.chat: true
       sorekillteams.ff: true
+      sorekillteams.kick: true
+      sorekillteams.transfer: true
       sorekillteams.admin: true
       sorekillteams.reload: true
       sorekillteams.version: true
@@ -87,6 +88,14 @@ permissions:
 
   sorekillteams.ff:
     description: Allows using /team ff
+    default: false
+
+  sorekillteams.kick:
+    description: Kick a member from your team (owner only)
+    default: false
+
+  sorekillteams.transfer:
+    description: Transfer team ownership to a member (owner only)
     default: false
 
   sorekillteams.admin:

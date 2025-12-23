@@ -263,6 +263,84 @@ public final class TeamCommand implements CommandExecutor {
                     return true;
                 }
 
+                // ✅ Option A: online name OR UUID only
+                case "kick" -> {
+                    if (!p.hasPermission("sorekillteams.kick")) {
+                        plugin.msg().send(p, "no_permission");
+                        return true;
+                    }
+                    if (args.length < 2) {
+                        plugin.msg().send(p, "team_kick_usage");
+                        return true;
+                    }
+
+                    UUID targetUuid = resolvePlayerUuidOnlineOrUuid(args[1]);
+                    if (targetUuid == null) {
+                        plugin.msg().send(p, "team_player_must_be_online_or_uuid");
+                        return true;
+                    }
+
+                    plugin.teams().kickMember(p.getUniqueId(), targetUuid);
+
+                    String targetName = nameOf(targetUuid);
+                    Team t = plugin.teams().getTeamByPlayer(p.getUniqueId()).orElse(null);
+                    String teamName = (t != null ? t.getName() : "Team");
+
+                    plugin.msg().send(p, "team_kick_success",
+                            "{player}", targetName,
+                            "{team}", Msg.color(teamName)
+                    );
+
+                    Player targetOnline = Bukkit.getPlayer(targetUuid);
+                    if (targetOnline != null) {
+                        plugin.msg().send(targetOnline, "team_kick_target",
+                                "{team}", Msg.color(teamName),
+                                "{by}", p.getName()
+                        );
+                    }
+
+                    return true;
+                }
+
+                // ✅ Option A: online name OR UUID only
+                case "transfer" -> {
+                    if (!p.hasPermission("sorekillteams.transfer")) {
+                        plugin.msg().send(p, "no_permission");
+                        return true;
+                    }
+                    if (args.length < 2) {
+                        plugin.msg().send(p, "team_transfer_usage");
+                        return true;
+                    }
+
+                    UUID targetUuid = resolvePlayerUuidOnlineOrUuid(args[1]);
+                    if (targetUuid == null) {
+                        plugin.msg().send(p, "team_player_must_be_online_or_uuid");
+                        return true;
+                    }
+
+                    plugin.teams().transferOwnership(p.getUniqueId(), targetUuid);
+
+                    String targetName = nameOf(targetUuid);
+                    Team t = plugin.teams().getTeamByPlayer(targetUuid).orElse(null);
+                    String teamName = (t != null ? t.getName() : "Team");
+
+                    plugin.msg().send(p, "team_transfer_success",
+                            "{player}", targetName,
+                            "{team}", Msg.color(teamName)
+                    );
+
+                    Player targetOnline = Bukkit.getPlayer(targetUuid);
+                    if (targetOnline != null) {
+                        plugin.msg().send(targetOnline, "team_transfer_received",
+                                "{team}", Msg.color(teamName),
+                                "{by}", p.getName()
+                        );
+                    }
+
+                    return true;
+                }
+
                 case "info" -> {
                     if (!p.hasPermission("sorekillteams.info")) {
                         plugin.msg().send(p, "no_permission");
@@ -277,7 +355,7 @@ public final class TeamCommand implements CommandExecutor {
 
                     String ownerName = nameOf(t.getOwner());
 
-                    // Members with online/offline coloring
+                    // NOTE: this call is NOT deprecated; only getOfflinePlayer(String) is deprecated
                     String members = t.getMembers().stream()
                             .map(uuid -> {
                                 Player online = Bukkit.getPlayer(uuid);
@@ -308,7 +386,6 @@ public final class TeamCommand implements CommandExecutor {
                             "{members}", members
                     );
 
-                    // ✅ Added legend
                     plugin.msg().send(p, "team_info_legend");
 
                     plugin.msg().send(p, "team_info_created", "{date}", created);
@@ -412,8 +489,12 @@ public final class TeamCommand implements CommandExecutor {
             case INVALID_PLAYER -> plugin.msg().send(p, "invalid_player");
 
             case OWNER_CANNOT_LEAVE -> plugin.msg().send(p, "team_owner_cannot_leave");
-
             case INVITE_COOLDOWN -> plugin.msg().send(p, "team_invite_cooldown");
+
+            // ✅ kick / transfer
+            case TARGET_NOT_MEMBER -> plugin.msg().send(p, "team_target_not_member");
+            case CANNOT_KICK_OWNER -> plugin.msg().send(p, "team_cannot_kick_owner");
+            case TRANSFER_SELF -> plugin.msg().send(p, "team_transfer_self");
 
             default -> p.sendMessage(plugin.msg().prefix() + "You can't do that right now.");
         }
@@ -451,5 +532,25 @@ public final class TeamCommand implements CommandExecutor {
         if (off != null && off.getName() != null && !off.getName().isBlank()) return off.getName();
 
         return uuid.toString().substring(0, 8);
+    }
+
+    /**
+     * Option A (Spigot-safe): resolve either:
+     * - a UUID string (offline-safe)
+     * - an online player name (must be online)
+     */
+    private UUID resolvePlayerUuidOnlineOrUuid(String arg) {
+        if (arg == null || arg.isBlank()) return null;
+
+        // UUID input
+        try {
+            return UUID.fromString(arg);
+        } catch (IllegalArgumentException ignored) {}
+
+        // Online name only
+        Player online = Bukkit.getPlayerExact(arg);
+        if (online != null) return online.getUniqueId();
+
+        return null;
     }
 }

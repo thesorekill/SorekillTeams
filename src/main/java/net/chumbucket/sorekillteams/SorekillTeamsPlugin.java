@@ -28,6 +28,7 @@ import org.bukkit.command.PluginCommand;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class SorekillTeamsPlugin extends JavaPlugin {
 
@@ -43,6 +44,9 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
     private int invitePurgeTaskId = -1;
     private int autosaveTaskId = -1;
+
+    // ✅ 1.0.6: prevent overlapping saves (autosave + command-triggered saves + disable)
+    private final AtomicBoolean saveInFlight = new AtomicBoolean(false);
 
     @Override
     public void onEnable() {
@@ -93,13 +97,8 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         stopTask(autosaveTaskId);
         autosaveTaskId = -1;
 
-        try {
-            if (storage != null && teams != null) {
-                storage.saveAll(teams);
-            }
-        } catch (Exception e) {
-            getLogger().severe("Failed to save teams: " + e.getClass().getSimpleName() + ": " + e.getMessage());
-        }
+        // ✅ 1.0.6: final save (sync) with overlap guard
+        trySaveNowSync("shutdown");
 
         getLogger().info("SorekillTeams disabled.");
     }
@@ -185,14 +184,16 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     }
 
     private void startInvitePurgeTask() {
-        // Always run (cheap) to keep invites list clean
         stopTask(invitePurgeTaskId);
+
+        int seconds = Math.max(10, getConfig().getInt("invites.purge_seconds", 60));
+        long ticks = seconds * 20L;
 
         invitePurgeTaskId = getServer().getScheduler().scheduleSyncRepeatingTask(
                 this,
                 () -> invites.purgeExpiredAll(System.currentTimeMillis()),
-                20L * 60L,
-                20L * 60L
+                ticks,
+                ticks
         );
     }
 
@@ -207,22 +208,47 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
         long ticks = seconds * 20L;
 
-        autosaveTaskId = getServer().getScheduler().scheduleSyncRepeatingTask(
+        // ✅ 1.0.6: async autosave to avoid hitching the main thread
+        autosaveTaskId = getServer().getScheduler().runTaskTimerAsynchronously(
                 this,
-                () -> {
-                    try {
-                        if (storage != null && teams != null) storage.saveAll(teams);
-                    } catch (Exception e) {
-                        getLogger().severe("Autosave failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
-                    }
-                },
+                () -> trySaveNowAsync("autosave"),
                 ticks,
                 ticks
-        );
+        ).getTaskId();
+    }
+
+    private void trySaveNowAsync(String reason) {
+        // Don't overlap saves
+        if (!saveInFlight.compareAndSet(false, true)) return;
+
+        try {
+            if (storage != null && teams != null) {
+                storage.saveAll(teams);
+            }
+        } catch (Exception e) {
+            getLogger().severe("Save failed (" + reason + "): " + e.getClass().getSimpleName() + ": " + e.getMessage());
+        } finally {
+            saveInFlight.set(false);
+        }
+    }
+
+    private void trySaveNowSync(String reason) {
+        // If async is saving, skip. On disable we’d rather not deadlock/hang.
+        if (!saveInFlight.compareAndSet(false, true)) return;
+
+        try {
+            if (storage != null && teams != null) {
+                storage.saveAll(teams);
+            }
+        } catch (Exception e) {
+            getLogger().severe("Save failed (" + reason + "): " + e.getClass().getSimpleName() + ": " + e.getMessage());
+        } finally {
+            saveInFlight.set(false);
+        }
     }
 
     private void stopTask(int taskId) {
-        // ✅ 1.0.4: treat 0 as a valid id just in case (defensive)
+        // treat 0 as a valid id just in case (defensive)
         if (taskId < 0) return;
         try {
             getServer().getScheduler().cancelTask(taskId);
