@@ -1,9 +1,19 @@
+/*
+ * Copyright © 2025 Sorekill
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ */
+
 package net.chumbucket.sorekillteams.listener;
 
 import net.chumbucket.sorekillteams.SorekillTeamsPlugin;
-import org.bukkit.Bukkit;
-import org.bukkit.entity.Player;
-import org.bukkit.event.*;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
+import org.bukkit.event.Listener;
 import org.bukkit.event.player.AsyncPlayerChatEvent;
 
 public final class TeamChatListener implements Listener {
@@ -15,23 +25,16 @@ public final class TeamChatListener implements Listener {
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
-    public void onChat(AsyncPlayerChatEvent e) {
-        Player p = e.getPlayer();
+    public void onChat(AsyncPlayerChatEvent event) {
+        if (!plugin.getConfig().getBoolean("chat.enabled", true)) return;
 
-        // Only intercept if the player has team chat toggled on
-        if (!plugin.teams().isTeamChatEnabled(p.getUniqueId())) return;
+        var player = event.getPlayer();
 
-        // If they are no longer in a team, turn it off automatically
-        var teamOpt = plugin.teams().getTeamByPlayer(p.getUniqueId());
-        if (teamOpt.isEmpty()) {
-            plugin.teams().setTeamChatEnabled(p.getUniqueId(), false);
-            return;
-        }
+        // Only intercept if they are in team chat mode
+        if (!plugin.teams().isTeamChatEnabled(player.getUniqueId())) return;
 
-        e.setCancelled(true);
-        String msg = e.getMessage();
-
-        // Send team chat on the main thread (safer with some chat/format plugins)
-        Bukkit.getScheduler().runTask(plugin, () -> plugin.teams().sendTeamChat(p, msg));
+        // Cancel normal chat and send to team chat
+        event.setCancelled(true);
+        plugin.teams().sendTeamChat(player, event.getMessage());
     }
 }
