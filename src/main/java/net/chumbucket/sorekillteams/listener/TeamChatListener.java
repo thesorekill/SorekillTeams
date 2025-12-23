@@ -43,23 +43,22 @@ public final class TeamChatListener implements Listener {
 
         final boolean debug = plugin.getConfig().getBoolean("chat.debug", false);
 
-        // Cancel normal chat
-        event.setCancelled(true);
-
         final String msgRaw = event.getMessage();
         if (msgRaw == null) return;
 
         final String msg = msgRaw.trim();
         if (msg.isEmpty()) return;
 
+        // Cancel normal chat
+        event.setCancelled(true);
+
         if (debug) {
             plugin.getLogger().info("[TC-DBG] intercept " + name + " len=" + msg.length());
         }
 
-        // IMPORTANT: schedule on main thread; do NOT capture Player from async thread
+        // IMPORTANT: schedule on main thread; do NOT use Bukkit APIs that require main thread here
         plugin.getServer().getScheduler().runTask(plugin, () -> {
             try {
-                // Player might have left
                 Player live = Bukkit.getPlayer(uuid);
                 if (live == null) {
                     if (debug) plugin.getLogger().info("[TC-DBG] abort send (offline) " + name);
@@ -69,6 +68,15 @@ public final class TeamChatListener implements Listener {
                 // They might have toggled team chat off between intercept and now
                 if (!plugin.teams().isTeamChatEnabled(uuid)) {
                     if (debug) plugin.getLogger().info("[TC-DBG] abort send (toggle off) " + name);
+                    return;
+                }
+
+                // Defensive: if toggle is ON but player has no team, turn it off to avoid “stuck intercept”
+                if (plugin.teams().getTeamByPlayer(uuid).isEmpty()) {
+                    try {
+                        plugin.teams().setTeamChatEnabled(uuid, false);
+                    } catch (Exception ignored) {}
+                    if (debug) plugin.getLogger().info("[TC-DBG] auto-disabled toggle (no team) for " + name);
                     return;
                 }
 

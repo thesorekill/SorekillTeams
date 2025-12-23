@@ -88,14 +88,31 @@ invites:
   # /team accept <team>
   accept_requires_team_id_when_multiple: true
 
+  # 1.1.0: if a team re-invites the same player while an invite is still pending,
+  # refresh the expiry instead of creating a duplicate invite.
+  reinvite_refreshes_expiry: true
+
 chat:
+  # Master switch for all team chat features (toggle + spy + /tc if you have it)
   enabled: true
+
+  # Team chat display format.
+  # Tokens: {team} {player} {message}
   format: "&8&l(&c&l{team}&8&l) &f{player} &8&l> &c{message}"
+
+  # Allow /team chat toggle mode (so normal chat routes to team)
   toggle_enabled: true
+
+  # 1.1.0: if true, players default to team-chat mode on join (recommended: false)
+  default_on_join: false
+
   debug: false
 
   spy:
+    # Admin spy on team chat messages
     enabled: true
+
+    # Tokens: {team} {player} {message}
     format: "&8[&cTEAM SPY&8] &8(&c{team}&8) &f{player}&8: &7{message}"
 
 friendly_fire:
@@ -137,6 +154,12 @@ homes:
 
   # If true, prevent using homes created on a different server_name (when proxy_mode is used)
   restrict_to_same_server: true
+
+admin:
+  # 1.1.0: Safety toggles for destructive admin actions
+  allow_force_disband: true
+  allow_set_owner: true
+  allow_force_kick: true
 
 integrations:
   placeholderapi: true

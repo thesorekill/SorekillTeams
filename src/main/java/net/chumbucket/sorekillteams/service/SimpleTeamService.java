@@ -63,6 +63,33 @@ public final class SimpleTeamService implements TeamService {
         }
     }
 
+    /**
+     * ✅ Storage helper: replace in-memory state with a loaded set of teams.
+     * This fixes callers that expect SimpleTeamService.putAllTeams(...)
+     */
+    public void putAllTeams(Collection<Team> loadedTeams) {
+        // wipe current state
+        teams.clear();
+        playerToTeam.clear();
+        teamChatToggled.clear();
+        inviteCooldownUntil.clear();
+        spyTargets.clear();
+
+        if (loadedTeams == null || loadedTeams.isEmpty()) return;
+
+        for (Team t : loadedTeams) {
+            putLoadedTeam(t);
+        }
+    }
+
+    /**
+     * ✅ Storage helper: enumerate all teams (YamlTeamStorage expects this).
+     */
+    public Collection<Team> allTeams() {
+        // Return a snapshot copy so callers can't mutate our internal map view
+        return new ArrayList<>(teams.values());
+    }
+
     @Override
     public Optional<Team> getTeamByPlayer(UUID player) {
         if (player == null) return Optional.empty();
@@ -127,20 +154,7 @@ public final class SimpleTeamService implements TeamService {
                 "{team}", Msg.color(t.getName())
         ));
 
-        Set<UUID> members = new HashSet<>(t.getMembers());
-        for (UUID m : members) {
-            if (m == null) continue;
-            playerToTeam.remove(m);
-            teamChatToggled.remove(m);
-        }
-
-        inviteCooldownUntil.remove(owner);
-        teams.remove(t.getId());
-
-        invites.clearTeam(t.getId());
-
-        // 1.0.8: remove this team from any spy sets
-        removeTeamFromAllSpyTargets(t.getId());
+        internalDisbandTeam(t);
 
         safeSave();
     }
@@ -336,7 +350,7 @@ public final class SimpleTeamService implements TeamService {
         if (!t.getOwner().equals(owner)) throw new TeamServiceException(TeamError.NOT_OWNER, "team_not_owner");
 
         if (member.equals(t.getOwner())) throw new TeamServiceException(TeamError.CANNOT_KICK_OWNER, "team_cannot_kick_owner");
-        if (!t.isMember(member)) throw new TeamServiceException(TeamError.TARGET_NOT_MEMBER, "team_kick_not_member");
+        if (!t.isMember(member)) throw new TeamServiceException(TeamError.TARGET_NOT_MEMBER, "team_target_not_member");
 
         t.getMembers().remove(member);
         ensureOwnerInMembers(t);
@@ -481,7 +495,7 @@ public final class SimpleTeamService implements TeamService {
     }
 
     // =========================
-    // 1.0.8: Spy API
+    // Spy API
     // =========================
 
     @Override
@@ -575,8 +589,100 @@ public final class SimpleTeamService implements TeamService {
         spyTargets.entrySet().removeIf(e -> e.getValue() == null || e.getValue().isEmpty());
     }
 
-    public Collection<Team> allTeams() {
-        return teams.values();
+    // =========================
+    // Admin (D)
+    // =========================
+
+    @Override
+    public void adminDisbandTeam(UUID teamId) {
+        if (teamId == null) return;
+        Team t = teams.get(teamId);
+        if (t == null) return;
+
+        broadcastToTeam(t, plugin.msg().format(
+                "team_team_disbanded",
+                "{team}", Msg.color(t.getName())
+        ));
+
+        internalDisbandTeam(t);
+        safeSave();
+    }
+
+    @Override
+    public void adminSetOwner(UUID teamId, UUID newOwner) {
+        if (teamId == null || newOwner == null) return;
+
+        Team t = teams.get(teamId);
+        if (t == null) return;
+
+        // If newOwner is already in another team, kick them from it first (admin semantics)
+        UUID other = playerToTeam.get(newOwner);
+        if (other != null && !other.equals(teamId)) {
+            adminKickPlayer(newOwner);
+        }
+
+        t.setOwner(newOwner);
+        ensureOwnerInMembers(t);
+        dedupeMembers(t);
+
+        // ensure mapping exists
+        playerToTeam.put(newOwner, teamId);
+
+        safeSave();
+
+        broadcastToTeam(t, plugin.msg().format(
+                "team_owner_transferred_broadcast",
+                "{owner}", nameOf(newOwner),
+                "{team}", Msg.color(t.getName())
+        ));
+    }
+
+    @Override
+    public void adminKickPlayer(UUID player) {
+        if (player == null) return;
+
+        Team t = getTeamByPlayer(player).orElse(null);
+        if (t == null) return;
+
+        // If owner: disband (avoids orphaned teams)
+        if (player.equals(t.getOwner())) {
+            adminDisbandTeam(t.getId());
+            return;
+        }
+
+        t.getMembers().remove(player);
+        ensureOwnerInMembers(t);
+        dedupeMembers(t);
+
+        playerToTeam.remove(player);
+        teamChatToggled.remove(player);
+
+        invites.clearTarget(player);
+
+        safeSave();
+
+        broadcastToTeam(t, plugin.msg().format(
+                "team_member_kicked_broadcast",
+                "{player}", nameOf(player),
+                "{team}", Msg.color(t.getName())
+        ));
+    }
+
+    private void internalDisbandTeam(Team t) {
+        if (t == null) return;
+
+        Set<UUID> members = new HashSet<>(t.getMembers());
+        for (UUID m : members) {
+            if (m == null) continue;
+            playerToTeam.remove(m);
+            teamChatToggled.remove(m);
+        }
+
+        inviteCooldownUntil.remove(t.getOwner());
+        teams.remove(t.getId());
+
+        invites.clearTeam(t.getId());
+        removeTeamFromAllSpyTargets(t.getId());
     }
 
     /* ----------------- helpers ----------------- */

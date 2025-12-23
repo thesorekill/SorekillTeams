@@ -20,10 +20,17 @@ import org.bukkit.entity.Player;
 
 public final class TeamChatCommand implements CommandExecutor {
 
+    private static final String PERM_NEW = "sorekillteams.teamchat";
+    private static final String PERM_LEGACY = "sorekillteams.chat"; // keep compatibility
+
     private final SorekillTeamsPlugin plugin;
 
     public TeamChatCommand(SorekillTeamsPlugin plugin) {
         this.plugin = plugin;
+    }
+
+    private boolean hasTeamChatPerm(Player p) {
+        return p.hasPermission(PERM_NEW) || p.hasPermission(PERM_LEGACY);
     }
 
     @Override
@@ -32,7 +39,8 @@ public final class TeamChatCommand implements CommandExecutor {
             plugin.msg().send(sender, "player_only");
             return true;
         }
-        if (!p.hasPermission("sorekillteams.chat")) {
+
+        if (!hasTeamChatPerm(p)) {
             plugin.msg().send(p, "no_permission");
             return true;
         }
@@ -54,7 +62,7 @@ public final class TeamChatCommand implements CommandExecutor {
                     plugin.getLogger().info("[TC-DBG] /tc msg by " + p.getName() + " len=" + msg.length());
                 }
 
-                // Service will handle "not in team" and will auto-disable toggle if needed
+                // Service handles not-in-team errors
                 plugin.teams().sendTeamChat(p, msg);
                 return true;
             }
@@ -82,10 +90,8 @@ public final class TeamChatCommand implements CommandExecutor {
             return true;
 
         } catch (TeamServiceException ex) {
-            // ✅ centralized mapping (same behavior as TeamCommand)
             CommandErrors.send(p, plugin, ex);
 
-            // optional debug line
             if (debug) {
                 plugin.getLogger().info("[TC-DBG] TeamServiceException for " + p.getName() + ": " +
                         (ex.code() == null ? "null" : ex.code().name()));

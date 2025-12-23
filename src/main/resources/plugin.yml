@@ -1,121 +1,133 @@
 name: SorekillTeams
-version: ${project.version}
+version: 1.1.0
 main: net.chumbucket.sorekillteams.SorekillTeamsPlugin
 api-version: 1.21
 author: Sorekill
+website: https://github.com/thesorekill/SorekillTeams
 
-softdepend: [PlaceholderAPI, MiniPlaceholders]
+softdepend:
+  - PlaceholderAPI
+  - MiniPlaceholders
 
 commands:
   team:
-    description: Manage your team
-    usage: /team <create|invite|invites|accept|deny|leave|disband|info|ff|kick|transfer|rename|spy>
-    aliases: [teams]
+    description: Teams command
+    usage: /team
+    aliases: [teams, t]
     permission: sorekillteams.use
 
   tc:
-    description: Team chat (toggle or send a message)
+    description: Send a team chat message (or toggle team chat mode)
     usage: /tc [message...]
-    permission: sorekillteams.chat
+    aliases: [teamchat]
+    permission: sorekillteams.teamchat
 
   sorekillteams:
-    description: Admin commands for SorekillTeams
-    usage: /sorekillteams <reload|version>
-    aliases: [st, stteams]
+    description: SorekillTeams admin command
+    usage: /sorekillteams reload|version
+    aliases: [st]
     permission: sorekillteams.admin
 
 permissions:
-  sorekillteams.*:
-    description: All SorekillTeams permissions
-    default: false
-    children:
-      sorekillteams.use: true
-      sorekillteams.info: true
-      sorekillteams.create: true
-      sorekillteams.invite: true
-      sorekillteams.invites: true
-      sorekillteams.accept: true
-      sorekillteams.deny: true
-      sorekillteams.leave: true
-      sorekillteams.disband: true
-      sorekillteams.chat: true
-      sorekillteams.ff: true
-      sorekillteams.kick: true
-      sorekillteams.transfer: true
-      sorekillteams.rename: true
-      sorekillteams.spy: true
-      sorekillteams.admin: true
-      sorekillteams.reload: true
-      sorekillteams.version: true
-
+  # -------------------------
+  # Base
+  # -------------------------
   sorekillteams.use:
-    description: Use /team
-    default: false
-
-  sorekillteams.info:
-    description: View your team info
-    default: false
-
-  sorekillteams.create:
-    description: Create a team
-    default: false
-
-  sorekillteams.invite:
-    description: Invite players to your team
-    default: false
-
-  sorekillteams.invites:
-    description: View received invites
-    default: false
-
-  sorekillteams.accept:
-    description: Accept a team invite
-    default: false
-
-  sorekillteams.deny:
-    description: Deny a team invite
-    default: false
-
-  sorekillteams.leave:
-    description: Leave your current team
-    default: false
-
-  sorekillteams.disband:
-    description: Disband your team (owner only)
-    default: false
-
-  sorekillteams.chat:
-    description: Use team chat (/tc)
-    default: false
-
-  sorekillteams.ff:
-    description: Allows using /team ff
-    default: false
-
-  sorekillteams.kick:
-    description: Allows using /team kick
-    default: false
-
-  sorekillteams.transfer:
-    description: Allows using /team transfer
-    default: false
-
-  sorekillteams.rename:
-    description: Allows using /team rename
-    default: false
-
-  sorekillteams.spy:
-    description: Allows spying on team chat via /team spy <team>
-    default: false
+    description: Allows using /team
+    default: true
 
   sorekillteams.admin:
-    description: Use /sorekillteams
+    description: Allows using /sorekillteams (admin controls)
+    default: op
+
+  # -------------------------
+  # Team management (player)
+  # -------------------------
+  sorekillteams.create:
+    description: Create a team
+    default: true
+  sorekillteams.invite:
+    description: Invite players to your team
+    default: true
+  sorekillteams.accept:
+    description: Accept team invites
+    default: true
+  sorekillteams.deny:
+    description: Deny team invites
+    default: true
+  sorekillteams.leave:
+    description: Leave your team
+    default: true
+  sorekillteams.disband:
+    description: Disband your team (owner)
+    default: true
+  sorekillteams.info:
+    description: View team info
+    default: true
+  sorekillteams.kick:
+    description: Kick a member (owner)
+    default: true
+  sorekillteams.transfer:
+    description: Transfer team ownership
+    default: true
+  sorekillteams.rename:
+    description: Rename your team
+    default: true
+  sorekillteams.ff:
+    description: Toggle friendly fire for your team (owner)
+    default: true
+
+  # -------------------------
+  # Team chat (A)
+  # -------------------------
+  sorekillteams.teamchat:
+    description: Use team chat features (toggle/team chat commands)
+    default: true
+
+  # Legacy node (backwards compatible with older setups using sorekillteams.chat)
+  sorekillteams.chat:
+    description: Legacy permission node (use sorekillteams.teamchat instead)
+    default: false
+    children:
+      sorekillteams.teamchat: true
+
+  # -------------------------
+  # Team spy (A)
+  # -------------------------
+  sorekillteams.spy:
+    description: Spy on team chat messages
+    default: op
+
+  # -------------------------
+  # Friendly fire bypass (C)
+  # -------------------------
+  sorekillteams.friendlyfire.bypass:
+    description: Bypass friendly fire protection (damage teammates even if blocked)
+    default: op
+
+  # -------------------------
+  # Max members permission pattern (existing behavior)
+  # Example: sorekillteams.max.6 gives max members 6
+  # -------------------------
+  sorekillteams.max.*:
+    description: Permission node pattern for team max sizes
     default: false
 
-  sorekillteams.reload:
-    description: Reload SorekillTeams config
-    default: false
-
-  sorekillteams.version:
-    description: View SorekillTeams version info
-    default: false
+  # -------------------------
+  # Admin action nodes (E)
+  # -------------------------
+  sorekillteams.admin.reload:
+    description: Reload config/messages
+    default: op
+  sorekillteams.admin.disband:
+    description: Force disband a team
+    default: op
+  sorekillteams.admin.setowner:
+    description: Force set owner of a team
+    default: op
+  sorekillteams.admin.kick:
+    description: Force kick a player from a team
+    default: op
+  sorekillteams.admin.info:
+    description: View team info for any team
+    default: op
