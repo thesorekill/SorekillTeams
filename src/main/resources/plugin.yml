@@ -15,8 +15,8 @@ commands:
     permission: sorekillteams.use
 
   tc:
-    description: Send a message to team chat
-    usage: /tc <message>
+    description: Toggles team chat
+    usage: /tc
     permission: sorekillteams.chat
 
   sorekillteams:
