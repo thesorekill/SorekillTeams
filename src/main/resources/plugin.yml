@@ -10,13 +10,13 @@ softdepend: [PlaceholderAPI, MiniPlaceholders]
 commands:
   team:
     description: Manage your team
-    usage: /team <create|invite|accept|leave|disband|chat|sethome|home|delhome|info>
+    usage: /team <create|invite|invites|accept|deny|leave|info>
     aliases: [teams]
     permission: sorekillteams.use
 
   tc:
-    description: Toggles team chat
-    usage: /tc
+    description: Team chat (toggle or send a message)
+    usage: /tc [message...]
     permission: sorekillteams.chat
 
   sorekillteams:
@@ -26,12 +26,12 @@ commands:
     permission: sorekillteams.admin
 
 permissions:
-  sorekillteams.info:
-    description: Allows viewing your team info
-    default: true
-
   sorekillteams.use:
     description: Use /team
+    default: true
+
+  sorekillteams.info:
+    description: View your team info
     default: true
 
   sorekillteams.create:
@@ -43,7 +43,7 @@ permissions:
     default: true
 
   sorekillteams.invites:
-    description: Check received invites
+    description: View received invites
     default: true
 
   sorekillteams.accept:
@@ -58,28 +58,8 @@ permissions:
     description: Leave your current team
     default: true
 
-  sorekillteams.disband:
-    description: Disband your team
-    default: op
-
-  sorekillteams.kick:
-    description: Kick members from your team
-    default: op
-
   sorekillteams.chat:
-    description: Use team chat (/tc and /team chat)
-    default: true
-
-  sorekillteams.sethome:
-    description: Set a team home
-    default: true
-
-  sorekillteams.home:
-    description: Teleport to a team home
-    default: true
-
-  sorekillteams.delhome:
-    description: Delete a team home
+    description: Use team chat (/tc)
     default: true
 
   sorekillteams.admin:
@@ -93,8 +73,3 @@ permissions:
   sorekillteams.version:
     description: View SorekillTeams version info
     default: true
-
-  # Future-proofing: permission-based member limit (we'll implement later)
-  sorekillteams.max_members.*:
-    description: Sets max team members allowed (e.g. sorekillteams.max_members.4)
-    default: false

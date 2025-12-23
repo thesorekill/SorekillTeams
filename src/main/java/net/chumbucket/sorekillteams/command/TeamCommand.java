@@ -48,7 +48,7 @@ public final class TeamCommand implements CommandExecutor {
             return true;
         }
 
-        String sub = args[0].toLowerCase(Locale.ROOT);
+        final String sub = args[0].toLowerCase(Locale.ROOT);
 
         try {
             switch (sub) {
@@ -63,14 +63,15 @@ public final class TeamCommand implements CommandExecutor {
                     }
 
                     String rawName = String.join(" ", Arrays.copyOfRange(args, 1, args.length));
-
                     TeamNameValidator.Validation v = nameValidator.validate(rawName);
                     if (!v.ok()) {
                         plugin.msg().send(p, v.reasonKey());
                         return true;
                     }
 
-                    Team t = plugin.teams().createTeam(p.getUniqueId(), v.coloredName());
+                    // Store CLEAN name (service enforces normalization; we color on display)
+                    String cleanName = stripColors(v.coloredName());
+                    Team t = plugin.teams().createTeam(p.getUniqueId(), v.plainName());
 
                     plugin.msg().send(p, "team_created",
                             "{team}", Msg.color(t.getName())
@@ -93,10 +94,6 @@ public final class TeamCommand implements CommandExecutor {
                         p.sendMessage(plugin.msg().prefix() + "That player is not online.");
                         return true;
                     }
-                    if (target.getUniqueId().equals(p.getUniqueId())) {
-                        p.sendMessage(plugin.msg().prefix() + "You can't invite yourself.");
-                        return true;
-                    }
 
                     plugin.teams().invite(p.getUniqueId(), target.getUniqueId());
 
@@ -114,7 +111,8 @@ public final class TeamCommand implements CommandExecutor {
                             "{team}", Msg.color(teamName)
                     );
 
-                    target.sendMessage(plugin.msg().prefix() + "Use /team invites to view invites. Use /team accept <team> to accept.");
+                    target.sendMessage(plugin.msg().prefix() + "Use /team invites to view invites.");
+                    target.sendMessage(plugin.msg().prefix() + "Use /team accept <team> to accept or /team deny <team> to deny.");
                     return true;
                 }
 
@@ -153,7 +151,7 @@ public final class TeamCommand implements CommandExecutor {
                     }
 
                     if (sorted.size() > 1) {
-                        p.sendMessage(plugin.msg().prefix() + "Use /team accept <team> or /team deny <team>.");
+                        p.sendMessage(plugin.msg().prefix() + "Tip: /team accept <team> or /team deny <team>");
                     }
 
                     return true;
@@ -240,7 +238,7 @@ public final class TeamCommand implements CommandExecutor {
                     }
 
                     plugin.teams().leaveTeam(p.getUniqueId());
-                    p.sendMessage(plugin.msg().prefix() + "You left your team.");
+                    plugin.msg().send(p, "team_left"); // add this key, or keep the old hardcoded string
                     return true;
                 }
 
@@ -277,28 +275,67 @@ public final class TeamCommand implements CommandExecutor {
                 }
             }
         } catch (IllegalStateException ex) {
-            String msg = ex.getMessage() == null ? "" : ex.getMessage();
-
-            if (msg.equalsIgnoreCase("TEAM_FULL")) {
-                plugin.msg().send(p, "team_team_full");
-                return true;
-            }
-            if (msg.equalsIgnoreCase("INVITE_EXPIRED")) {
-                plugin.msg().send(p, "team_invite_expired");
-                return true;
-            }
-            if (msg.equalsIgnoreCase("MULTIPLE_INVITES")) {
-                p.sendMessage(plugin.msg().prefix() + "You have multiple invites. Use /team invites then /team accept <team>.");
-                return true;
-            }
-
-            p.sendMessage(plugin.msg().prefix() + msg);
+            // Patch: keep player-facing output clean and consistent
+            handleServiceError(p, ex);
             return true;
         } catch (Exception ex) {
             p.sendMessage(plugin.msg().prefix() + "An error occurred.");
-            plugin.getLogger().severe("Command error: " + ex.getMessage());
+            plugin.getLogger().severe("Command error (" + sub + "): " + ex.getClass().getSimpleName() + ": " + ex.getMessage());
             return true;
         }
+    }
+
+    private void handleServiceError(Player p, IllegalStateException ex) {
+        String m = ex.getMessage() == null ? "" : ex.getMessage();
+
+        // Known service “codes”
+        if (m.equalsIgnoreCase("TEAM_FULL")) {
+            plugin.msg().send(p, "team_team_full");
+            return;
+        }
+        if (m.equalsIgnoreCase("INVITE_EXPIRED")) {
+            plugin.msg().send(p, "team_invite_expired");
+            return;
+        }
+        if (m.equalsIgnoreCase("MULTIPLE_INVITES")) {
+            p.sendMessage(plugin.msg().prefix() + "You have multiple invites. Use /team invites then /team accept <team>.");
+            return;
+        }
+
+        // Common raw reasons (keep them friendly)
+        if (m.equalsIgnoreCase("Already in a team")) {
+            plugin.msg().send(p, "team_already_in_team");
+            return;
+        }
+        if (m.equalsIgnoreCase("Not in a team")) {
+            plugin.msg().send(p, "team_not_in_team");
+            return;
+        }
+        if (m.equalsIgnoreCase("Not owner")) {
+            plugin.msg().send(p, "team_not_owner");
+            return;
+        }
+        if (m.equalsIgnoreCase("Already a member")) {
+            plugin.msg().send(p, "team_already_member");
+            return;
+        }
+        if (m.equalsIgnoreCase("Invitee already in a team")) {
+            plugin.msg().send(p, "team_invitee_in_team");
+            return;
+        }
+        if (m.equalsIgnoreCase("You cannot invite yourself")) {
+            plugin.msg().send(p, "team_invite_self");
+            return;
+        }
+        if (m.startsWith("&") || m.contains("{")) {
+            // If service returned a formatted message (like cooldown), just send it as-is
+            p.sendMessage(plugin.msg().prefix() + Msg.color(m));
+            return;
+        }
+
+        // Fallback: generic, don’t leak internals
+        p.sendMessage(plugin.msg().prefix() + "You can't do that right now.");
+        plugin.getLogger().warning("Service error shown to player " + p.getName() + ": " + m);
     }
 
     private Optional<UUID> resolveInviteTeamIdByName(UUID invitee, String teamArgRaw) {
@@ -317,9 +354,17 @@ public final class TeamCommand implements CommandExecutor {
     }
 
     private String normalize(String s) {
+        if (s == null) return "";
         String colored = Msg.color(s);
         String stripped = ChatColor.stripColor(colored);
-        return stripped == null ? "" : stripped.trim().toLowerCase(Locale.ROOT);
+        return stripped == null ? "" : stripped.trim().toLowerCase(Locale.ROOT).replaceAll("\\s{2,}", " ");
+    }
+
+    private String stripColors(String s) {
+        if (s == null) return "";
+        String colored = Msg.color(s);
+        String stripped = ChatColor.stripColor(colored);
+        return stripped == null ? "" : stripped.trim();
     }
 
     private String nameOf(UUID uuid) {
@@ -329,6 +374,6 @@ public final class TeamCommand implements CommandExecutor {
         OfflinePlayer off = Bukkit.getOfflinePlayer(uuid);
         if (off != null && off.getName() != null && !off.getName().isBlank()) return off.getName();
 
-        return uuid.toString().substring(0, 8);
+        return uuid == null ? "unknown" : uuid.toString().substring(0, 8);
     }
 }
