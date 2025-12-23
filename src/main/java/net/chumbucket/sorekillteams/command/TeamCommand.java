@@ -25,6 +25,9 @@ import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -32,6 +35,9 @@ public final class TeamCommand implements CommandExecutor {
 
     private final SorekillTeamsPlugin plugin;
     private final TeamNameValidator nameValidator;
+
+    private static final DateTimeFormatter TEAM_CREATED_FMT =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm z").withZone(ZoneId.systemDefault());
 
     public TeamCommand(SorekillTeamsPlugin plugin) {
         this.plugin = plugin;
@@ -254,7 +260,6 @@ public final class TeamCommand implements CommandExecutor {
                     }
 
                     plugin.teams().disbandTeam(p.getUniqueId());
-                    // Service broadcasts to team; we don't need to double-message here
                     return true;
                 }
 
@@ -271,9 +276,29 @@ public final class TeamCommand implements CommandExecutor {
                     }
 
                     String ownerName = nameOf(t.getOwner());
+
+                    // Members with online/offline coloring
                     String members = t.getMembers().stream()
-                            .map(this::nameOf)
-                            .collect(Collectors.joining(", "));
+                            .map(uuid -> {
+                                Player online = Bukkit.getPlayer(uuid);
+                                if (online != null) {
+                                    return Msg.color("&a" + online.getName());
+                                }
+                                OfflinePlayer off = Bukkit.getOfflinePlayer(uuid);
+                                String n = (off != null && off.getName() != null && !off.getName().isBlank())
+                                        ? off.getName()
+                                        : uuid.toString().substring(0, 8);
+                                return Msg.color("&c" + n);
+                            })
+                            .sorted(String.CASE_INSENSITIVE_ORDER)
+                            .collect(Collectors.joining(Msg.color("&7, ")));
+
+                    String created = TEAM_CREATED_FMT.format(Instant.ofEpochMilli(t.getCreatedAtMs()));
+
+                    boolean tc = plugin.teams().isTeamChatEnabled(p.getUniqueId());
+                    String tcState = tc ? "&aON" : "&cOFF";
+
+                    String ffState = t.isFriendlyFireEnabled() ? "&aON" : "&cOFF";
 
                     plugin.msg().send(p, "team_info_header");
                     plugin.msg().send(p, "team_info_name", "{team}", Msg.color(t.getName()));
@@ -282,6 +307,62 @@ public final class TeamCommand implements CommandExecutor {
                             "{count}", String.valueOf(t.getMembers().size()),
                             "{members}", members
                     );
+
+                    // ✅ Added legend
+                    plugin.msg().send(p, "team_info_legend");
+
+                    plugin.msg().send(p, "team_info_created", "{date}", created);
+                    plugin.msg().send(p, "team_info_tc", "{state}", Msg.color(tcState));
+                    plugin.msg().send(p, "team_info_ff", "{state}", Msg.color(ffState));
+                    return true;
+                }
+
+                case "ff", "friendlyfire" -> {
+                    if (!p.hasPermission("sorekillteams.ff")) {
+                        plugin.msg().send(p, "no_permission");
+                        return true;
+                    }
+
+                    Team t = plugin.teams().getTeamByPlayer(p.getUniqueId()).orElse(null);
+                    if (t == null) {
+                        plugin.msg().send(p, "team_not_in_team");
+                        return true;
+                    }
+
+                    if (args.length < 2 || args[1].equalsIgnoreCase("status")) {
+                        String state = t.isFriendlyFireEnabled() ? "&aON" : "&cOFF";
+                        plugin.msg().send(p, "team_ff_status", "{state}", Msg.color(state));
+                        plugin.msg().send(p, "team_ff_usage");
+                        return true;
+                    }
+
+                    if (!t.getOwner().equals(p.getUniqueId())) {
+                        plugin.msg().send(p, "team_not_owner");
+                        return true;
+                    }
+
+                    String mode = args[1].toLowerCase(Locale.ROOT);
+                    boolean newValue;
+
+                    switch (mode) {
+                        case "on", "true", "enable", "enabled" -> newValue = true;
+                        case "off", "false", "disable", "disabled" -> newValue = false;
+                        case "toggle" -> newValue = !t.isFriendlyFireEnabled();
+                        default -> {
+                            plugin.msg().send(p, "team_ff_usage");
+                            return true;
+                        }
+                    }
+
+                    t.setFriendlyFireEnabled(newValue);
+
+                    try {
+                        if (plugin.storage() != null && plugin.teams() != null) {
+                            plugin.storage().saveAll(plugin.teams());
+                        }
+                    } catch (Exception ignored) {}
+
+                    plugin.msg().send(p, newValue ? "team_ff_status_on" : "team_ff_status_off");
                     return true;
                 }
 
@@ -302,13 +383,11 @@ public final class TeamCommand implements CommandExecutor {
     }
 
     private void handleServiceError(Player p, TeamServiceException ex) {
-        // If service provided a direct messages.yml key, use it.
         if (ex.messageKey() != null && !ex.messageKey().isBlank()) {
             plugin.msg().send(p, ex.messageKey(), ex.pairs());
             return;
         }
 
-        // Otherwise map by code (stable)
         TeamError code = ex.code();
         if (code == null) {
             p.sendMessage(plugin.msg().prefix() + "You can't do that right now.");
@@ -334,7 +413,7 @@ public final class TeamCommand implements CommandExecutor {
 
             case OWNER_CANNOT_LEAVE -> plugin.msg().send(p, "team_owner_cannot_leave");
 
-            case INVITE_COOLDOWN -> plugin.msg().send(p, "team_invite_cooldown"); // should normally come with pairs
+            case INVITE_COOLDOWN -> plugin.msg().send(p, "team_invite_cooldown");
 
             default -> p.sendMessage(plugin.msg().prefix() + "You can't do that right now.");
         }

@@ -93,9 +93,15 @@ public final class YamlTeamStorage implements TeamStorage {
                 // Ensure owner is included
                 members.add(owner);
 
-                final Team t = new Team(id, name, owner);
+                // ✅ created date (fallback: "now" if missing)
+                long createdAt = tSec.getLong("created_at", System.currentTimeMillis());
+
+                final Team t = new Team(id, name, owner, createdAt);
                 t.getMembers().clear();
                 t.getMembers().addAll(members);
+
+                // ✅ team FF toggle
+                t.setFriendlyFireEnabled(tSec.getBoolean("friendly_fire", false));
 
                 simple.putLoadedTeam(t);
                 loaded++;
@@ -124,7 +130,7 @@ public final class YamlTeamStorage implements TeamStorage {
 
         final YamlConfiguration yml = new YamlConfiguration();
 
-        // Write deterministic ordering (helps diffing & debugging)
+        // deterministic ordering
         final List<Team> teams = new ArrayList<>(simple.allTeams());
         teams.sort(Comparator.comparing(t -> t.getId().toString()));
 
@@ -136,11 +142,13 @@ public final class YamlTeamStorage implements TeamStorage {
             // Ensure members list is unique + includes owner
             final LinkedHashSet<UUID> members = new LinkedHashSet<>(t.getMembers());
             members.add(t.getOwner());
-
             yml.set(path + ".members", members.stream().map(UUID::toString).collect(Collectors.toList()));
+
+            // ✅ 1.0.5 fields
+            yml.set(path + ".friendly_fire", t.isFriendlyFireEnabled());
+            yml.set(path + ".created_at", t.getCreatedAtMs());
         }
 
-        // Safer save on Windows: write temp, then move/replace.
         final File tmp = new File(plugin.getDataFolder(), "teams.yml.tmp");
 
         try {
@@ -154,13 +162,11 @@ public final class YamlTeamStorage implements TeamStorage {
                         StandardCopyOption.REPLACE_EXISTING,
                         StandardCopyOption.ATOMIC_MOVE);
             } catch (AtomicMoveNotSupportedException ignored) {
-                // Filesystem doesn’t support atomic move; still replace existing
                 Files.move(tmpPath, destPath, StandardCopyOption.REPLACE_EXISTING);
             }
 
         } catch (Exception e) {
             plugin.getLogger().severe("Failed to save teams.yml: " + e.getClass().getSimpleName() + ": " + e.getMessage());
-            // Keep tmp if it exists; can be used to recover.
         }
     }
 

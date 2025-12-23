@@ -11,6 +11,8 @@
 package net.chumbucket.sorekillteams.update;
 
 import net.chumbucket.sorekillteams.SorekillTeamsPlugin;
+import net.chumbucket.sorekillteams.util.Msg;
+import org.bukkit.ChatColor;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -63,22 +65,25 @@ public final class UpdateChecker {
             lastResult.set(res);
 
             if (!res.success()) {
-                plugin.getLogger().warning(plugin.msg().format("update_check_failed", "{reason}", res.error()));
+                String msg = plugin.msg().format("update_check_failed", "{reason}", res.error());
+                plugin.getLogger().warning(stripForConsole(msg));
                 return;
             }
 
             if (res.updateAvailable()) {
-                plugin.getLogger().warning(plugin.msg().format(
+                String msg = plugin.msg().format(
                         "update_outdated_console",
                         "{latest}", res.latestVersion(),
                         "{current}", res.currentVersion(),
                         "{url}", res.url()
-                ));
+                );
+                plugin.getLogger().warning(stripForConsole(msg));
             } else {
-                plugin.getLogger().info(plugin.msg().format(
+                String msg = plugin.msg().format(
                         "update_up_to_date_console",
                         "{current}", res.currentVersion()
-                ));
+                );
+                plugin.getLogger().info(stripForConsole(msg));
             }
         });
     }
@@ -162,5 +167,16 @@ public final class UpdateChecker {
         if (secondQuote < 0) return Optional.empty();
 
         return Optional.of(json.substring(firstQuote + 1, secondQuote));
+    }
+
+    /**
+     * messages.yml uses & color codes and Msg.format() translates them into § codes.
+     * Console doesn't render §, so we strip them for clean logs.
+     */
+    private static String stripForConsole(String s) {
+        if (s == null) return "";
+        // In case anything is still '&', normalize then strip.
+        String colored = Msg.color(s);
+        return ChatColor.stripColor(colored);
     }
 }
