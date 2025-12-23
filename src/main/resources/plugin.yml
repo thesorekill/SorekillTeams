@@ -4,13 +4,12 @@ main: net.chumbucket.sorekillteams.SorekillTeamsPlugin
 api-version: 1.21
 author: Sorekill
 
-# Optional integrations
 softdepend: [PlaceholderAPI, MiniPlaceholders]
 
 commands:
   team:
     description: Manage your team
-    usage: /team <create|invite|invites|accept|deny|leave|disband|info>
+    usage: /team <create|invite|invites|accept|deny|leave|disband|info|ff|kick|transfer>
     aliases: [teams]
     permission: sorekillteams.use
 
@@ -28,7 +27,7 @@ commands:
 permissions:
   sorekillteams.*:
     description: All SorekillTeams permissions
-    default: op
+    default: false
     children:
       sorekillteams.use: true
       sorekillteams.info: true
@@ -40,62 +39,73 @@ permissions:
       sorekillteams.leave: true
       sorekillteams.disband: true
       sorekillteams.chat: true
+      sorekillteams.ff: true
+      sorekillteams.kick: true
+      sorekillteams.transfer: true
       sorekillteams.admin: true
       sorekillteams.reload: true
       sorekillteams.version: true
 
   sorekillteams.use:
     description: Use /team
-    default: true
+    default: false
 
   sorekillteams.info:
     description: View your team info
-    default: true
+    default: false
 
   sorekillteams.create:
     description: Create a team
-    default: true
+    default: false
 
   sorekillteams.invite:
     description: Invite players to your team
-    default: true
+    default: false
 
   sorekillteams.invites:
     description: View received invites
-    default: true
+    default: false
 
   sorekillteams.accept:
     description: Accept a team invite
-    default: true
+    default: false
 
   sorekillteams.deny:
     description: Deny a team invite
-    default: true
+    default: false
 
   sorekillteams.leave:
     description: Leave your current team
-    default: true
+    default: false
 
   sorekillteams.disband:
     description: Disband your team (owner only)
-    default: true
+    default: false
 
   sorekillteams.chat:
     description: Use team chat (/tc)
-    default: true
-
-  sorekillteams.admin:
-    description: Use /sorekillteams
-    default: op
-
-  sorekillteams.reload:
-    description: Reload SorekillTeams config
-    default: op
-
-  sorekillteams.version:
-    description: View SorekillTeams version info
-    default: true
+    default: false
 
   sorekillteams.ff:
     description: Allows using /team ff
-    default: true
+    default: false
+
+  sorekillteams.kick:
+    description: Kick a member from your team (owner only)
+    default: false
+
+  sorekillteams.transfer:
+    description: Transfer team ownership to a member (owner only)
+    default: false
+
+  sorekillteams.admin:
+    description: Use /sorekillteams
+    default: false
+
+  sorekillteams.reload:
+    description: Reload SorekillTeams config
+    default: false
+
+  sorekillteams.version:
+    description: View SorekillTeams version info
+    default: false

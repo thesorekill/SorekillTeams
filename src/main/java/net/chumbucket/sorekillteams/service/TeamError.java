@@ -31,5 +31,10 @@ public enum TeamError {
 
     OWNER_CANNOT_LEAVE,
 
-    INVITE_COOLDOWN
+    INVITE_COOLDOWN,
+
+    // ✅ 1.0.6 additions (kick / transfer)
+    TARGET_NOT_MEMBER,
+    CANNOT_KICK_OWNER,
+    TRANSFER_SELF
 }

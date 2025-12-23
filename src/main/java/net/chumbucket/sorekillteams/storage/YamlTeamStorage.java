@@ -93,14 +93,16 @@ public final class YamlTeamStorage implements TeamStorage {
                 // Ensure owner is included
                 members.add(owner);
 
-                // ✅ created date (fallback: "now" if missing)
+                // created date (fallback: "now" if missing)
                 long createdAt = tSec.getLong("created_at", System.currentTimeMillis());
 
                 final Team t = new Team(id, name, owner, createdAt);
+
+                // Replace the internal members set contents
                 t.getMembers().clear();
                 t.getMembers().addAll(members);
 
-                // ✅ team FF toggle
+                // team FF toggle
                 t.setFriendlyFireEnabled(tSec.getBoolean("friendly_fire", false));
 
                 simple.putLoadedTeam(t);
@@ -128,25 +130,26 @@ public final class YamlTeamStorage implements TeamStorage {
             return;
         }
 
+        // ✅ 1.0.6: SNAPSHOT first to avoid concurrent modification during async autosave
+        final List<TeamSnapshot> snapshot = snapshotTeams(simple);
+
         final YamlConfiguration yml = new YamlConfiguration();
 
-        // deterministic ordering
-        final List<Team> teams = new ArrayList<>(simple.allTeams());
-        teams.sort(Comparator.comparing(t -> t.getId().toString()));
+        for (TeamSnapshot t : snapshot) {
+            final String path = "teams." + t.id;
 
-        for (Team t : teams) {
-            final String path = "teams." + t.getId();
-            yml.set(path + ".name", t.getName());
-            yml.set(path + ".owner", t.getOwner().toString());
+            yml.set(path + ".name", t.name);
+            yml.set(path + ".owner", t.owner.toString());
 
             // Ensure members list is unique + includes owner
-            final LinkedHashSet<UUID> members = new LinkedHashSet<>(t.getMembers());
-            members.add(t.getOwner());
-            yml.set(path + ".members", members.stream().map(UUID::toString).collect(Collectors.toList()));
+            final LinkedHashSet<UUID> members = new LinkedHashSet<>(t.members);
+            members.add(t.owner);
 
-            // ✅ 1.0.5 fields
-            yml.set(path + ".friendly_fire", t.isFriendlyFireEnabled());
-            yml.set(path + ".created_at", t.getCreatedAtMs());
+            yml.set(path + ".members",
+                    members.stream().map(UUID::toString).collect(Collectors.toList()));
+
+            yml.set(path + ".friendly_fire", t.friendlyFire);
+            yml.set(path + ".created_at", t.createdAtMs);
         }
 
         final File tmp = new File(plugin.getDataFolder(), "teams.yml.tmp");
@@ -169,6 +172,46 @@ public final class YamlTeamStorage implements TeamStorage {
             plugin.getLogger().severe("Failed to save teams.yml: " + e.getClass().getSimpleName() + ": " + e.getMessage());
         }
     }
+
+    private List<TeamSnapshot> snapshotTeams(SimpleTeamService simple) {
+        final List<Team> teams = new ArrayList<>(simple.allTeams());
+        teams.sort(Comparator.comparing(t -> t.getId().toString()));
+
+        final List<TeamSnapshot> out = new ArrayList<>(teams.size());
+
+        for (Team t : teams) {
+            if (t == null || t.getId() == null || t.getOwner() == null) continue;
+
+            final UUID id = t.getId();
+            final String name = (t.getName() == null || t.getName().isBlank()) ? "Team" : t.getName();
+            final UUID owner = t.getOwner();
+            final long created = t.getCreatedAtMs();
+            final boolean ff = t.isFriendlyFireEnabled();
+
+            // ✅ FIX: not final, so try/catch assignment is legal
+            Set<UUID> membersCopy;
+            try {
+                membersCopy = new LinkedHashSet<>(t.getMembers());
+            } catch (Exception ex) {
+                plugin.getLogger().warning("Failed to snapshot members for team " + id + ": " +
+                        ex.getClass().getSimpleName() + ": " + ex.getMessage());
+                membersCopy = new LinkedHashSet<>();
+            }
+
+            out.add(new TeamSnapshot(id, name, owner, membersCopy, ff, created));
+        }
+
+        return out;
+    }
+
+    private record TeamSnapshot(
+            UUID id,
+            String name,
+            UUID owner,
+            Set<UUID> members,
+            boolean friendlyFire,
+            long createdAtMs
+    ) {}
 
     private UUID safeUuid(String s) {
         if (s == null) return null;

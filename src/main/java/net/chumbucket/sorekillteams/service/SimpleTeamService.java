@@ -26,7 +26,7 @@ public final class SimpleTeamService implements TeamService {
 
     private final SorekillTeamsPlugin plugin;
     private final TeamStorage storage;
-    private final TeamInvites invites; // 1.0.3 invite store
+    private final TeamInvites invites; // invite store
 
     private final Map<UUID, Team> teams = new ConcurrentHashMap<>();
     private final Map<UUID, UUID> playerToTeam = new ConcurrentHashMap<>();
@@ -84,7 +84,7 @@ public final class SimpleTeamService implements TeamService {
 
         UUID id = UUID.randomUUID();
 
-        // ✅ Team now tracks createdAtMs internally (Team constructor sets it)
+        // Team tracks createdAtMs internally (Team constructor sets it)
         Team t = new Team(id, cleanName, owner);
 
         ensureOwnerInMembers(t);
@@ -123,7 +123,7 @@ public final class SimpleTeamService implements TeamService {
 
         teams.remove(t.getId());
 
-        // remove invites that point to this team (1.0.3 store)
+        // remove invites that point to this team
         invites.clearTeam(t.getId());
 
         safeSave();
@@ -137,7 +137,6 @@ public final class SimpleTeamService implements TeamService {
                 new TeamServiceException(TeamError.NOT_IN_TEAM, "team_not_in_team"));
 
         if (t.getOwner().equals(player)) {
-            // v1: owner must disband (or you can add transfer later)
             throw new TeamServiceException(TeamError.OWNER_CANNOT_LEAVE, "team_owner_cannot_leave");
         }
 
@@ -148,7 +147,6 @@ public final class SimpleTeamService implements TeamService {
         playerToTeam.remove(player);
         teamChatToggled.remove(player);
 
-        // Optional: clear any invites for this player (reduces confusion)
         invites.clearTarget(player);
 
         safeSave();
@@ -170,7 +168,6 @@ public final class SimpleTeamService implements TeamService {
                 new TeamServiceException(TeamError.NOT_IN_TEAM, "team_not_in_team"));
 
         if (!t.getOwner().equals(inviter)) {
-            // v1 rule: only owner can invite
             throw new TeamServiceException(TeamError.ONLY_OWNER_CAN_INVITE, "team_not_owner");
         }
 
@@ -198,7 +195,6 @@ public final class SimpleTeamService implements TeamService {
         int expirySeconds = Math.max(1, plugin.getConfig().getInt("invites.expiry_seconds", 300));
         long expiresAt = now + (expirySeconds * 1000L);
 
-        // Duplicate prevention + store
         TeamInvite inv = new TeamInvite(
                 t.getId(),
                 t.getName(),
@@ -311,6 +307,69 @@ public final class SimpleTeamService implements TeamService {
         return ta != null && ta.equals(tb);
     }
 
+    // ✅ 1.0.6: kick member (owner only)
+    @Override
+    public void kickMember(UUID owner, UUID member) {
+        if (owner == null || member == null) throw new TeamServiceException(TeamError.INVALID_PLAYER, "invalid_player");
+
+        Team t = getTeamByPlayer(owner).orElseThrow(() ->
+                new TeamServiceException(TeamError.NOT_IN_TEAM, "team_not_in_team"));
+
+        if (!t.getOwner().equals(owner)) throw new TeamServiceException(TeamError.NOT_OWNER, "team_not_owner");
+
+        if (member.equals(t.getOwner())) throw new TeamServiceException(TeamError.CANNOT_KICK_OWNER, "team_cannot_kick_owner");
+
+        if (!t.isMember(member)) throw new TeamServiceException(TeamError.TARGET_NOT_MEMBER, "team_kick_not_member");
+
+        // Remove
+        t.getMembers().remove(member);
+        ensureOwnerInMembers(t);
+        dedupeMembers(t);
+
+        playerToTeam.remove(member);
+        teamChatToggled.remove(member);
+
+        // Clear pending invites for kicked player (optional but reduces confusion)
+        invites.clearTarget(member);
+
+        safeSave();
+
+        String memberName = nameOf(member);
+        broadcastToTeam(t, plugin.msg().format(
+                "team_member_kicked_broadcast",
+                "{player}", memberName,
+                "{team}", Msg.color(t.getName())
+        ));
+    }
+
+    // ✅ 1.0.6: transfer ownership (owner -> member)
+    @Override
+    public void transferOwnership(UUID owner, UUID newOwner) {
+        if (owner == null || newOwner == null) throw new TeamServiceException(TeamError.INVALID_PLAYER, "invalid_player");
+
+        Team t = getTeamByPlayer(owner).orElseThrow(() ->
+                new TeamServiceException(TeamError.NOT_IN_TEAM, "team_not_in_team"));
+
+        if (!t.getOwner().equals(owner)) throw new TeamServiceException(TeamError.NOT_OWNER, "team_not_owner");
+
+        if (owner.equals(newOwner)) throw new TeamServiceException(TeamError.TRANSFER_SELF, "team_transfer_self");
+
+        if (!t.isMember(newOwner)) throw new TeamServiceException(TeamError.TARGET_NOT_MEMBER, "team_target_not_member");
+
+        t.setOwner(newOwner);
+        ensureOwnerInMembers(t);
+        dedupeMembers(t);
+
+        safeSave();
+
+        String newOwnerName = nameOf(newOwner);
+        broadcastToTeam(t, plugin.msg().format(
+                "team_owner_transferred_broadcast",
+                "{owner}", newOwnerName,
+                "{team}", Msg.color(t.getName())
+        ));
+    }
+
     @Override
     public boolean isTeamChatEnabled(UUID player) {
         return player != null && teamChatToggled.contains(player);
@@ -338,7 +397,6 @@ public final class SimpleTeamService implements TeamService {
     public void sendTeamChat(Player sender, String message) {
         if (sender == null) return;
 
-        // Chat master toggle
         if (!plugin.getConfig().getBoolean("chat.enabled", true)) {
             plugin.msg().send(sender, "teamchat_disabled");
             return;
@@ -364,12 +422,7 @@ public final class SimpleTeamService implements TeamService {
             fmt = "&8&l(&c&l{team}&8&l) &f{player} &8&l> &c{message}";
         }
 
-        // Replace placeholders; ensure team name respects any allowed color codes stored in the team name
         String teamName = Msg.color(team.getName());
-
-        // Decide whether to allow color codes in messages:
-        // - Keeping message raw prevents players from injecting color codes unless they type '&' and you colorize it.
-        // - Here we DO allow & color codes because Msg.color() is applied to the whole formatted line.
         String coloredMsg = Msg.color(message);
 
         String out = Msg.color(

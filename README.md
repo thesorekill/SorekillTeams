@@ -1,6 +1,6 @@
 # SorekillTeams
 
-**SorekillTeams** is a lightweight teams plugin for **Paper and Spigot** that provides clean team management, private team chat, friendly-fire protection, and shared team homes.
+**SorekillTeams** is a lightweight teams plugin for **Paper and Spigot** that provides clean team management, private team chat, invite-based membership, and friendly-fire control.
 
 Designed for modern servers and future proxy networks, SorekillTeams focuses on core team mechanics without bloated clan systems or unnecessary complexity.
 
@@ -8,18 +8,18 @@ Designed for modern servers and future proxy networks, SorekillTeams focuses on 
 
 SorekillTeams allows players to form persistent teams that feel natural and intuitive to play with.
 
-Players can team up with friends, communicate privately, avoid accidental PvP, and share team homes — all while server owners retain full control through permissions and configuration.
+Players can team up with friends, communicate privately, manage invitations, and avoid accidental PvP — all while server owners retain full control through permissions and configuration.
 
-The plugin is built with future **Velocity and BungeeCord** support in mind and follows clean architecture principles to scale beyond a single server.
+The plugin is built with future **Velocity and BungeeCord** support in mind and follows clean architecture principles to scale cleanly beyond a single server.
 
 ## Features
 
-- ⭐ **Team creation & management** — Create, invite, join, leave, and disband teams using simple commands.
+- ⭐ **Team creation & management** — Create, invite, accept, deny, leave, disband, and view team info.
+- ⭐ **Team invites system** — Expiring, cooldown-based invites with list and accept/deny support.
 - ⭐ **Team chat** — Private team-only chat via `/tc` or toggleable team chat mode.
-- ⭐ **Friendly-fire protection** — Prevent teammates from damaging each other (including projectiles).
-- ⭐ **Team homes** — Shared homes that all team members can teleport to.
+- ⭐ **Friendly-fire control** — Toggle whether teammates can damage each other (including projectiles).
 - ⭐ **Paper & Spigot compatible** — Built against the Spigot API; runs cleanly on Paper and forks.
-- ⭐ **Network-ready design** — Stores server identifiers to support future proxy teleporting.
+- ⭐ **Network-ready design** — Stores server identifiers to support future proxy expansion.
 - ⭐ **Optional placeholder support** — Integrates with PlaceholderAPI and MiniPlaceholders.
 - ⭐ **Lightweight & focused** — No economy, claims, or RPG mechanics — just teams.
 
@@ -35,47 +35,48 @@ The plugin is built with future **Velocity and BungeeCord** support in mind and 
 1. Download `SorekillTeams.jar`.
 2. Place the jar into your server’s `plugins/` directory.
 3. Start or restart the server.
-4. Configure settings in `config.yml` and `messages.yml` as needed.
+4. Grant permissions using a permissions plugin (e.g. LuckPerms).
+5. Configure settings in `config.yml` and `messages.yml` as needed.
 
 ## Commands
 
 | Command | Usage | Description | Permission |
 |--------|-------|------------|------------|
 | `/team` | `/team help` | Base team command | `sorekillteams.use` |
-| `/team create` | `/team create [name]` | Create a new team | `sorekillteams.create` |
-| `/team invite` | `/team invite [player]` | Invite a player to your team | `sorekillteams.invite` |
-| `/team accept` | `/team accept` | Accept a pending invite | `sorekillteams.accept` |
+| `/team create` | `/team create <name>` | Create a new team | `sorekillteams.create` |
+| `/team invite` | `/team invite <player>` | Invite a player to your team | `sorekillteams.invite` |
+| `/team invites` | `/team invites` | View pending invites | `sorekillteams.invites` |
+| `/team accept` | `/team accept <team>` | Accept a team invite | `sorekillteams.accept` |
+| `/team deny` | `/team deny <team>` | Deny a team invite | `sorekillteams.deny` |
 | `/team leave` | `/team leave` | Leave your team | `sorekillteams.leave` |
-| `/team disband` | `/team disband` | Disband your team | `sorekillteams.disband` |
-| `/team sethome` | `/team sethome [name]` | Set a team home | `sorekillteams.sethome` |
-| `/team home` | `/team home [name]` | Teleport to a team home | `sorekillteams.home` |
-| `/team delhome` | `/team delhome [name]` | Delete a team home | `sorekillteams.delhome` |
-| `/tc` | `/tc [message]` | Send a team chat message | `sorekillteams.chat` |
-| `/sorekillteams reload` | `/sorekillteams reload` | Reload the plugin | `sorekillteams.reload` |
+| `/team disband` | `/team disband` | Disband your team (owner only) | `sorekillteams.disband` |
+| `/team info` | `/team info` | View team information | `sorekillteams.info` |
+| `/team ff` | `/team ff <on|off|toggle|status>` | Manage friendly fire | `sorekillteams.ff` |
+| `/tc` | `/tc [message]` | Team chat (toggle or send) | `sorekillteams.chat` |
+| `/sorekillteams reload` | `/sorekillteams reload` | Reload configuration | `sorekillteams.reload` |
 | `/sorekillteams version` | `/sorekillteams version` | View plugin version | `sorekillteams.version` |
 
 ## Permissions
 
-All permissions default to **false** unless otherwise noted and are intended for use with permission plugins such as **LuckPerms**.
+All permissions default to **false** and must be explicitly granted using a permissions plugin such as **LuckPerms**.
 
-| Permission | Description | Default |
-|-----------|------------|---------|
-| `sorekillteams.use` | Use `/team` | true |
-| `sorekillteams.create` | Create teams | true |
-| `sorekillteams.invite` | Invite players | true |
-| `sorekillteams.accept` | Accept team invites | true |
-| `sorekillteams.leave` | Leave a team | true |
-| `sorekillteams.disband` | Disband a team | op |
-| `sorekillteams.kick` | Kick team members | op |
-| `sorekillteams.chat` | Use team chat | true |
-| `sorekillteams.sethome` | Set team homes | true |
-| `sorekillteams.home` | Teleport to team homes | true |
-| `sorekillteams.delhome` | Delete team homes | true |
-| `sorekillteams.reload` | Reload the plugin | op |
-| `sorekillteams.version` | View version info | true |
-| `sorekillteams.max_members.<n>` | Set max team size | false |
-
-> **Note:** Team size limits can later be controlled via permission-based limits.
+| Permission | Description |
+|-----------|------------|
+| `sorekillteams.use` | Use `/team` |
+| `sorekillteams.info` | View team info |
+| `sorekillteams.create` | Create teams |
+| `sorekillteams.invite` | Invite players |
+| `sorekillteams.invites` | View received invites |
+| `sorekillteams.accept` | Accept team invites |
+| `sorekillteams.deny` | Deny team invites |
+| `sorekillteams.leave` | Leave a team |
+| `sorekillteams.disband` | Disband a team |
+| `sorekillteams.chat` | Use team chat |
+| `sorekillteams.ff` | Manage team friendly fire |
+| `sorekillteams.admin` | Use admin commands |
+| `sorekillteams.reload` | Reload plugin configuration |
+| `sorekillteams.version` | View version info |
+| `sorekillteams.*` | Grants all SorekillTeams permissions |
 
 ## Placeholders
 
@@ -83,13 +84,13 @@ SorekillTeams includes optional support for **PlaceholderAPI** and **MiniPlaceho
 
 When enabled, placeholders can be used in scoreboards, chat formats, and other supported plugins.
 
-(Placeholder list will be documented once implemented.)
+(Placeholder documentation will be expanded in future releases.)
 
 ## Configuration
 
 SorekillTeams uses two configuration files:
 
-- `config.yml` — gameplay rules, limits, integrations
+- `config.yml` — gameplay rules, limits, invites, chat, friendly fire, integrations
 - `messages.yml` — all user-facing messages and prefixes
 
 All configuration options include safe defaults and can be reloaded using `/sorekillteams reload`.
@@ -99,9 +100,9 @@ All configuration options include safe defaults and can be reloaded using `/sore
 The following features are planned or under consideration for future releases:
 
 - Proxy support (Velocity & BungeeCord)
-- Cross-server team homes
-- Team roles (owner, admin, member)
-- Team information GUI
+- Cross-server team features
+- Team roles (owner, moderator, member)
+- Team GUI menus
 - Scoreboard and nametag integrations
 
 Planned features are subject to change and will be implemented with a focus on stability and network compatibility.
@@ -119,6 +120,6 @@ Please keep contributions focused and aligned with the plugin’s lightweight de
 ## Credits
 
 - Developed by **Sorekill**
-- Built for use on the **Chumbucket Network** chumbucket.net
+- Built for use on the **Chumbucket Network** — chumbucket.net
 
 © 2025 Sorekill. Licensed under the Apache-2.0 License.

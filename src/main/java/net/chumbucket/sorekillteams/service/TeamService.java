@@ -30,23 +30,10 @@ public interface TeamService {
 
     void invite(UUID inviter, UUID invitee);
 
-    /**
-     * Accept an invite. If teamId is empty:
-     * - accepts the only invite if exactly 1 exists
-     * - throws MULTIPLE_INVITES if more than 1 exists
-     */
     Optional<TeamInvite> acceptInvite(UUID invitee, Optional<UUID> teamId);
 
-    /**
-     * Deny an invite. If teamId is empty:
-     * - denies the only invite if exactly 1 exists
-     * - throws MULTIPLE_INVITES if more than 1 exists
-     */
     boolean denyInvite(UUID invitee, Optional<UUID> teamId);
 
-    /**
-     * Get all active (non-expired) invites for a player.
-     */
     Collection<TeamInvite> getInvites(UUID invitee);
 
     boolean areTeammates(UUID a, UUID b);
@@ -58,4 +45,8 @@ public interface TeamService {
 
     // Send a message to the sender's team chat
     void sendTeamChat(Player sender, String message);
+
+    // ✅ 1.0.6 additions
+    void kickMember(UUID owner, UUID member);
+    void transferOwnership(UUID owner, UUID newOwner);
 }

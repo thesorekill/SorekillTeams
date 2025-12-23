@@ -42,6 +42,7 @@ teams:
 invites:
   expiry_seconds: 300
   cooldown_seconds: 10
+  purge_seconds: 60
 
 chat:
   enabled: true
@@ -49,8 +50,10 @@ chat:
   toggle_enabled: true
 
 friendly_fire:
-  enabled: false              # true = friendly fire allowed
-  include_projectiles: true  # only matters when enabled: false
+  enabled: false              # true = friendly fire allowed (no blocking)
+  include_projectiles: true
+  include_area_effect_clouds: true
+  include_explosives: true
   message:
     enabled: true
     cooldown_ms: 1000

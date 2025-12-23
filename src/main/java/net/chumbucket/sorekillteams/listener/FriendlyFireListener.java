@@ -13,13 +13,16 @@ package net.chumbucket.sorekillteams.listener;
 import net.chumbucket.sorekillteams.SorekillTeamsPlugin;
 import net.chumbucket.sorekillteams.model.Team;
 import net.chumbucket.sorekillteams.service.TeamService;
+import org.bukkit.entity.AreaEffectCloud;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Projectile;
+import org.bukkit.entity.TNTPrimed;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
+import org.bukkit.projectiles.ProjectileSource;
 
 import java.util.Map;
 import java.util.Optional;
@@ -42,18 +45,21 @@ public final class FriendlyFireListener implements Listener {
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
     public void onDamage(EntityDamageByEntityEvent e) {
 
-        // ✅ Semantics:
+        // ✅ Option A semantics (matches your config.yml comments):
         // enabled: true  => friendly fire ALLOWED globally => do nothing
         // enabled: false => friendly fire BLOCKED globally => apply team rules
-        if (plugin.getConfig().getBoolean("friendly_fire.enabled", true)) return;
+        if (plugin.getConfig().getBoolean("friendly_fire.enabled", false)) return;
 
         if (!(e.getEntity() instanceof Player victim)) return;
 
         boolean includeProjectiles = plugin.getConfig().getBoolean("friendly_fire.include_projectiles", true);
+        boolean includeClouds = plugin.getConfig().getBoolean("friendly_fire.include_area_effect_clouds", true);
+        boolean includeExplosives = plugin.getConfig().getBoolean("friendly_fire.include_explosives", true);
 
-        Player attacker = resolveAttacker(e.getDamager(), includeProjectiles);
+        Player attacker = resolveAttacker(e.getDamager(), includeProjectiles, includeClouds, includeExplosives);
         if (attacker == null) return;
 
+        // allow self-damage
         if (attacker.getUniqueId().equals(victim.getUniqueId())) return;
 
         TeamService teams = plugin.teams();
@@ -62,12 +68,9 @@ public final class FriendlyFireListener implements Listener {
         // Not teammates? allow
         if (!teams.areTeammates(attacker.getUniqueId(), victim.getUniqueId())) return;
 
-        // ✅ Team-level override:
-        // If the team's friendly fire is enabled, allow damage even though global is blocked.
+        // ✅ Team-level override: allow teammate damage if team FF is enabled
         Optional<Team> teamOpt = teams.getTeamByPlayer(attacker.getUniqueId());
-        if (teamOpt.isPresent() && teamOpt.get().isFriendlyFireEnabled()) {
-            return; // allow teammate damage
-        }
+        if (teamOpt.isPresent() && teamOpt.get().isFriendlyFireEnabled()) return;
 
         // Otherwise block it
         e.setCancelled(true);
@@ -76,28 +79,37 @@ public final class FriendlyFireListener implements Listener {
         maybeMessage(attacker);
     }
 
-    private Player resolveAttacker(Entity damager, boolean includeProjectiles) {
-        if (damager instanceof Player p) {
-            return p;
-        }
+    private Player resolveAttacker(Entity damager,
+                                  boolean includeProjectiles,
+                                  boolean includeClouds,
+                                  boolean includeExplosives) {
 
-        if (!includeProjectiles) {
-            return null;
-        }
+        // direct melee
+        if (damager instanceof Player p) return p;
 
-        if (damager instanceof Projectile proj) {
+        // projectiles (arrows, tridents, snowballs, splash potions, etc.)
+        if (includeProjectiles && damager instanceof Projectile proj) {
             Object shooter = proj.getShooter();
-            if (shooter instanceof Player p) {
-                return p;
-            }
+            if (shooter instanceof Player p) return p;
+        }
+
+        // lingering potion / AoE cloud attribution
+        if (includeClouds && damager instanceof AreaEffectCloud cloud) {
+            ProjectileSource src = cloud.getSource();
+            if (src instanceof Player p) return p;
+        }
+
+        // TNTPrimed source attribution
+        if (includeExplosives && damager instanceof TNTPrimed tnt) {
+            Entity source = tnt.getSource();
+            if (source instanceof Player p) return p;
         }
 
         return null;
     }
 
     private void maybeMessage(Player attacker) {
-        boolean msgEnabled = plugin.getConfig().getBoolean("friendly_fire.message.enabled", true);
-        if (!msgEnabled) return;
+        if (!plugin.getConfig().getBoolean("friendly_fire.message.enabled", true)) return;
 
         long cooldownMs = plugin.getConfig().getLong("friendly_fire.message.cooldown_ms", 1000L);
         if (cooldownMs > 0) {
