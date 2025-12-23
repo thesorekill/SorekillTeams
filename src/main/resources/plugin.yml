@@ -1,0 +1,88 @@
+name: SorekillTeams
+version: 1.0.0
+main: net.chumbucket.sorekillteams.SorekillTeamsPlugin
+api-version: 1.21
+author: Sorekill
+
+# Optional integrations
+softdepend: [PlaceholderAPI, MiniPlaceholders]
+
+commands:
+  team:
+    description: Manage your team
+    usage: /team <create|invite|accept|leave|disband|chat|sethome|home|delhome|info>
+    aliases: [teams]
+    permission: sorekillteams.use
+
+  tc:
+    description: Send a message to team chat
+    usage: /tc <message>
+    permission: sorekillteams.chat
+
+  sorekillteams:
+    description: Admin commands for SorekillTeams
+    usage: /sorekillteams <reload|version>
+    aliases: [st, stteams]
+    permission: sorekillteams.admin
+
+permissions:
+  sorekillteams.use:
+    description: Use /team
+    default: true
+
+  sorekillteams.create:
+    description: Create a team
+    default: true
+
+  sorekillteams.invite:
+    description: Invite players to your team
+    default: true
+
+  sorekillteams.accept:
+    description: Accept a team invite
+    default: true
+
+  sorekillteams.leave:
+    description: Leave your current team
+    default: true
+
+  sorekillteams.disband:
+    description: Disband your team
+    default: op
+
+  sorekillteams.kick:
+    description: Kick members from your team
+    default: op
+
+  sorekillteams.chat:
+    description: Use team chat (/tc and /team chat)
+    default: true
+
+  sorekillteams.sethome:
+    description: Set a team home
+    default: true
+
+  sorekillteams.home:
+    description: Teleport to a team home
+    default: true
+
+  sorekillteams.delhome:
+    description: Delete a team home
+    default: true
+
+  sorekillteams.admin:
+    description: Use /sorekillteams
+    default: op
+
+  sorekillteams.reload:
+    description: Reload SorekillTeams config
+    default: op
+
+  sorekillteams.version:
+    description: View SorekillTeams version info
+    default: true
+
+  # Future-proofing: permission-based member limit (we'll implement later)
+  sorekillteams.max_members.*:
+    description: Sets max team members allowed (e.g. sorekillteams.max_members.4)
+    default: false

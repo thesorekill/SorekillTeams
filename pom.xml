@@ -1,0 +1,93 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>net.chumbucket</groupId>
+  <artifactId>SorekillTeams</artifactId>
+  <version>1.0.0</version>
+  <name>SorekillTeams</name>
+  <packaging>jar</packaging>
+
+  <properties>
+    <java.version>21</java.version>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
+    <!-- Target Spigot API for Paper+Spigot compatibility -->
+    <spigot.api.version>1.21.4-R0.1-SNAPSHOT</spigot.api.version>
+
+    <!-- Optional deps -->
+    <placeholderapi.version>2.11.7</placeholderapi.version>
+    <miniplaceholders.version>3.1.0</miniplaceholders.version>
+  </properties>
+
+  <repositories>
+    <!-- Spigot snapshots repo -->
+    <repository>
+      <id>spigotmc-repo</id>
+      <url>https://hub.spigotmc.org/nexus/content/repositories/snapshots/</url>
+    </repository>
+
+    <!-- PlaceholderAPI repo -->
+    <repository>
+      <id>extendedclip-placeholderapi</id>
+      <url>https://repo.extendedclip.com/content/repositories/placeholderapi/</url>
+    </repository>
+  </repositories>
+
+  <dependencies>
+    <!-- Compile against Spigot API; runs on Paper too -->
+    <dependency>
+      <groupId>org.spigotmc</groupId>
+      <artifactId>spigot-api</artifactId>
+      <version>${spigot.api.version}</version>
+      <scope>provided</scope>
+    </dependency>
+
+    <!-- Optional: PlaceholderAPI (softdepend at runtime; provided at compile time) -->
+    <dependency>
+      <groupId>me.clip</groupId>
+      <artifactId>placeholderapi</artifactId>
+      <version>${placeholderapi.version}</version>
+      <scope>provided</scope>
+    </dependency>
+
+    <!-- Optional: MiniPlaceholders (softdepend at runtime; provided at compile time) -->
+    <dependency>
+      <groupId>io.github.miniplaceholders</groupId>
+      <artifactId>miniplaceholders-api</artifactId>
+      <version>${miniplaceholders.version}</version>
+      <scope>provided</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <finalName>${project.artifactId}-${project.version}</finalName>
+
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
+        <configuration>
+          <release>${java.version}</release>
+        </configuration>
+      </plugin>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <version>3.4.2</version>
+        <configuration>
+          <archive>
+            <manifest>
+              <addDefaultImplementationEntries>true</addDefaultImplementationEntries>
+              <addDefaultSpecificationEntries>true</addDefaultSpecificationEntries>
+            </manifest>
+          </archive>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+
+</project>

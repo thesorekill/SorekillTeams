@@ -1,0 +1,41 @@
+# =========================
+# SorekillTeams - config.yml
+# =========================
+
+storage:
+  type: yaml
+  autosave_seconds: 60
+
+teams:
+  max_members_default: 4
+  name:
+    min_length: 3
+    max_length: 16
+    allowed: "a-zA-Z0-9_"
+
+invites:
+  expiry_seconds: 300
+  cooldown_seconds: 10
+
+chat:
+  enabled: true
+  format: "&8[&bTEAM&8] &f{player}&7: &b{message}"
+  toggle_enabled: true
+
+friendly_fire:
+  enabled: true
+  include_projectiles: true
+
+homes:
+  enabled: true
+  max_homes: 3
+  server_name: "survival"
+  warmup_seconds: 0
+  cooldown_seconds: 5
+
+integrations:
+  placeholderapi: true
+  miniplaceholders: true
+
+files:
+  messages: "messages.yml"

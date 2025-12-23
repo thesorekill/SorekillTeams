@@ -1,0 +1,14 @@
+# =========================
+# SorekillTeams - messages.yml
+# =========================
+
+prefix: "&8[&bSorekill Teams&8]&r "
+
+no_permission: "{prefix}&cYou don't have permission."
+player_only: "{prefix}&cThis command can only be used by players."
+
+reloaded: "{prefix}&aConfig reloaded."
+version: "{prefix}&7SorekillTeams &bv{version}&7 by &fSorekill&7."
+
+# Generic errors
+unknown_command: "{prefix}&cUnknown subcommand. Try: &f/sorekillteams <reload|version>&c."
