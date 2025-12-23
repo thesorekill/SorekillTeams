@@ -9,7 +9,7 @@ softdepend: [PlaceholderAPI, MiniPlaceholders]
 commands:
   team:
     description: Manage your team
-    usage: /team <create|invite|invites|accept|deny|leave|disband|info|ff|kick|transfer>
+    usage: /team <create|invite|invites|accept|deny|leave|disband|info|kick|transfer|rename>
     aliases: [teams]
     permission: sorekillteams.use
 
@@ -42,6 +42,7 @@ permissions:
       sorekillteams.ff: true
       sorekillteams.kick: true
       sorekillteams.transfer: true
+      sorekillteams.rename: true
       sorekillteams.admin: true
       sorekillteams.reload: true
       sorekillteams.version: true
@@ -91,11 +92,15 @@ permissions:
     default: false
 
   sorekillteams.kick:
-    description: Kick a member from your team (owner only)
+    description: Allows using /team kick
     default: false
 
   sorekillteams.transfer:
-    description: Transfer team ownership to a member (owner only)
+    description: Allows using /team transfer
+    default: false
+
+  sorekillteams.rename:
+    description: Allows using /team rename
     default: false
 
   sorekillteams.admin:

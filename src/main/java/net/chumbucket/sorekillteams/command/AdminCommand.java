@@ -39,24 +39,25 @@ public final class AdminCommand implements CommandExecutor {
             return true;
         }
 
-        String sub = args[0].toLowerCase(Locale.ROOT);
+        final boolean debug = plugin.getConfig().getBoolean("commands.debug", false);
+        final String sub = args[0].toLowerCase(Locale.ROOT);
 
         switch (sub) {
-            case "reload" -> {
-                if (!sender.hasPermission("sorekillteams.reload")) {
-                    plugin.msg().send(sender, "no_permission");
-                    return true;
-                }
+            case "reload", "rl", "r" -> {
+                if (!requirePerm(sender, "sorekillteams.reload")) return true;
+
+                if (debug) plugin.getLogger().info("[ADMIN-DBG] reload by " + sender.getName());
+
                 plugin.reloadEverything();
                 plugin.msg().send(sender, "reloaded");
                 return true;
             }
 
-            case "version" -> {
-                if (!sender.hasPermission("sorekillteams.version")) {
-                    plugin.msg().send(sender, "no_permission");
-                    return true;
-                }
+            case "version", "ver", "v" -> {
+                if (!requirePerm(sender, "sorekillteams.version")) return true;
+
+                if (debug) plugin.getLogger().info("[ADMIN-DBG] version by " + sender.getName());
+
                 plugin.msg().send(sender, "version",
                         "{version}", plugin.getDescription().getVersion()
                 );
@@ -69,5 +70,11 @@ public final class AdminCommand implements CommandExecutor {
                 return true;
             }
         }
+    }
+
+    private boolean requirePerm(CommandSender sender, String perm) {
+        if (sender.hasPermission(perm)) return true;
+        plugin.msg().send(sender, "no_permission");
+        return false;
     }
 }

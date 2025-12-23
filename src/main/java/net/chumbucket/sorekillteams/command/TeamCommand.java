@@ -13,8 +13,8 @@ package net.chumbucket.sorekillteams.command;
 import net.chumbucket.sorekillteams.SorekillTeamsPlugin;
 import net.chumbucket.sorekillteams.model.Team;
 import net.chumbucket.sorekillteams.model.TeamInvite;
-import net.chumbucket.sorekillteams.service.TeamError;
 import net.chumbucket.sorekillteams.service.TeamServiceException;
+import net.chumbucket.sorekillteams.util.CommandErrors;
 import net.chumbucket.sorekillteams.util.Msg;
 import net.chumbucket.sorekillteams.util.TeamNameValidator;
 import org.bukkit.Bukkit;
@@ -61,6 +61,7 @@ public final class TeamCommand implements CommandExecutor {
             return true;
         }
 
+        final boolean debug = plugin.getConfig().getBoolean("commands.debug", false);
         final String sub = args[0].toLowerCase(Locale.ROOT);
 
         try {
@@ -87,6 +88,8 @@ public final class TeamCommand implements CommandExecutor {
                     plugin.msg().send(p, "team_created",
                             "{team}", Msg.color(t.getName())
                     );
+
+                    if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " created team=" + t.getName());
                     return true;
                 }
 
@@ -124,6 +127,8 @@ public final class TeamCommand implements CommandExecutor {
 
                     plugin.msg().send(target, "team_usage");
                     plugin.msg().send(target, "team_invites_tip");
+
+                    if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " invited " + target.getName() + " team=" + teamName);
                     return true;
                 }
 
@@ -165,6 +170,7 @@ public final class TeamCommand implements CommandExecutor {
                         plugin.msg().send(p, "team_invites_tip");
                     }
 
+                    if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " viewed invites count=" + sorted.size());
                     return true;
                 }
 
@@ -213,6 +219,7 @@ public final class TeamCommand implements CommandExecutor {
                         );
                     }
 
+                    if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " accepted invite team=" + teamName);
                     return true;
                 }
 
@@ -239,6 +246,8 @@ public final class TeamCommand implements CommandExecutor {
                     }
 
                     plugin.msg().send(p, "team_invite_denied");
+
+                    if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " denied invite");
                     return true;
                 }
 
@@ -250,6 +259,8 @@ public final class TeamCommand implements CommandExecutor {
 
                     plugin.teams().leaveTeam(p.getUniqueId());
                     plugin.msg().send(p, "team_left");
+
+                    if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " left team");
                     return true;
                 }
 
@@ -260,10 +271,47 @@ public final class TeamCommand implements CommandExecutor {
                     }
 
                     plugin.teams().disbandTeam(p.getUniqueId());
+
+                    if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " disbanded team");
                     return true;
                 }
 
-                // ✅ Option A: online name OR UUID only
+                // ✅ 1.0.7: rename (owner only)
+                case "rename" -> {
+                    if (!p.hasPermission("sorekillteams.rename")) {
+                        plugin.msg().send(p, "no_permission");
+                        return true;
+                    }
+                    if (args.length < 2) {
+                        plugin.msg().send(p, "team_rename_usage");
+                        return true;
+                    }
+
+                    String rawName = String.join(" ", Arrays.copyOfRange(args, 1, args.length));
+                    TeamNameValidator.Validation v = nameValidator.validate(rawName);
+                    if (!v.ok()) {
+                        plugin.msg().send(p, v.reasonKey());
+                        return true;
+                    }
+
+                    Team before = plugin.teams().getTeamByPlayer(p.getUniqueId()).orElse(null);
+                    String oldName = before != null ? before.getName() : "Team";
+
+                    plugin.teams().renameTeam(p.getUniqueId(), v.plainName());
+
+                    Team after = plugin.teams().getTeamByPlayer(p.getUniqueId()).orElse(null);
+                    String newName = after != null ? after.getName() : v.plainName();
+
+                    plugin.msg().send(p, "team_renamed",
+                            "{old}", Msg.color(oldName),
+                            "{team}", Msg.color(newName)
+                    );
+
+                    if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " renamed team old=" + oldName + " new=" + newName);
+                    return true;
+                }
+
+                // Option A: online name OR UUID only
                 case "kick" -> {
                     if (!p.hasPermission("sorekillteams.kick")) {
                         plugin.msg().send(p, "no_permission");
@@ -299,10 +347,11 @@ public final class TeamCommand implements CommandExecutor {
                         );
                     }
 
+                    if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " kicked uuid=" + targetUuid);
                     return true;
                 }
 
-                // ✅ Option A: online name OR UUID only
+                // Option A: online name OR UUID only
                 case "transfer" -> {
                     if (!p.hasPermission("sorekillteams.transfer")) {
                         plugin.msg().send(p, "no_permission");
@@ -338,6 +387,7 @@ public final class TeamCommand implements CommandExecutor {
                         );
                     }
 
+                    if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " transferred ownership -> " + targetUuid);
                     return true;
                 }
 
@@ -355,7 +405,6 @@ public final class TeamCommand implements CommandExecutor {
 
                     String ownerName = nameOf(t.getOwner());
 
-                    // NOTE: this call is NOT deprecated; only getOfflinePlayer(String) is deprecated
                     String members = t.getMembers().stream()
                             .map(uuid -> {
                                 Player online = Bukkit.getPlayer(uuid);
@@ -391,6 +440,8 @@ public final class TeamCommand implements CommandExecutor {
                     plugin.msg().send(p, "team_info_created", "{date}", created);
                     plugin.msg().send(p, "team_info_tc", "{state}", Msg.color(tcState));
                     plugin.msg().send(p, "team_info_ff", "{state}", Msg.color(ffState));
+
+                    if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " viewed team info team=" + t.getName());
                     return true;
                 }
 
@@ -440,6 +491,8 @@ public final class TeamCommand implements CommandExecutor {
                     } catch (Exception ignored) {}
 
                     plugin.msg().send(p, newValue ? "team_ff_status_on" : "team_ff_status_off");
+
+                    if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " ff -> " + (newValue ? "ON" : "OFF"));
                     return true;
                 }
 
@@ -450,53 +503,19 @@ public final class TeamCommand implements CommandExecutor {
                 }
             }
         } catch (TeamServiceException ex) {
-            handleServiceError(p, ex);
+            // ✅ centralized mapping (same behavior everywhere)
+            CommandErrors.send(p, plugin, ex);
+
+            if (debug) {
+                plugin.getLogger().info("[TEAM-DBG] TeamServiceException sub=" + sub + " player=" + p.getName() + " code=" +
+                        (ex.code() == null ? "null" : ex.code().name()));
+            }
             return true;
+
         } catch (Exception ex) {
             p.sendMessage(plugin.msg().prefix() + "An error occurred.");
             plugin.getLogger().severe("Command error (" + sub + "): " + ex.getClass().getSimpleName() + ": " + ex.getMessage());
             return true;
-        }
-    }
-
-    private void handleServiceError(Player p, TeamServiceException ex) {
-        if (ex.messageKey() != null && !ex.messageKey().isBlank()) {
-            plugin.msg().send(p, ex.messageKey(), ex.pairs());
-            return;
-        }
-
-        TeamError code = ex.code();
-        if (code == null) {
-            p.sendMessage(plugin.msg().prefix() + "You can't do that right now.");
-            return;
-        }
-
-        switch (code) {
-            case TEAM_FULL -> plugin.msg().send(p, "team_team_full");
-            case INVITE_EXPIRED -> plugin.msg().send(p, "team_invite_expired");
-            case MULTIPLE_INVITES -> plugin.msg().send(p, "team_multiple_invites_hint");
-            case INVITE_ALREADY_PENDING -> plugin.msg().send(p, "team_invite_already_pending");
-
-            case ALREADY_IN_TEAM -> plugin.msg().send(p, "team_already_in_team");
-            case NOT_IN_TEAM -> plugin.msg().send(p, "team_not_in_team");
-            case NOT_OWNER, ONLY_OWNER_CAN_INVITE -> plugin.msg().send(p, "team_not_owner");
-            case ALREADY_MEMBER -> plugin.msg().send(p, "team_already_member");
-            case INVITEE_IN_TEAM -> plugin.msg().send(p, "team_invitee_in_team");
-            case INVITE_SELF -> plugin.msg().send(p, "team_invite_self");
-
-            case TEAM_NAME_TAKEN -> plugin.msg().send(p, "team_name_taken");
-            case INVALID_TEAM_NAME -> plugin.msg().send(p, "team_invalid_name");
-            case INVALID_PLAYER -> plugin.msg().send(p, "invalid_player");
-
-            case OWNER_CANNOT_LEAVE -> plugin.msg().send(p, "team_owner_cannot_leave");
-            case INVITE_COOLDOWN -> plugin.msg().send(p, "team_invite_cooldown");
-
-            // ✅ kick / transfer
-            case TARGET_NOT_MEMBER -> plugin.msg().send(p, "team_target_not_member");
-            case CANNOT_KICK_OWNER -> plugin.msg().send(p, "team_cannot_kick_owner");
-            case TRANSFER_SELF -> plugin.msg().send(p, "team_transfer_self");
-
-            default -> p.sendMessage(plugin.msg().prefix() + "You can't do that right now.");
         }
     }
 

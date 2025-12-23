@@ -13,6 +13,7 @@ package net.chumbucket.sorekillteams;
 import net.chumbucket.sorekillteams.command.AdminCommand;
 import net.chumbucket.sorekillteams.command.TeamChatCommand;
 import net.chumbucket.sorekillteams.command.TeamCommand;
+import net.chumbucket.sorekillteams.command.TeamCommandTabCompleter;
 import net.chumbucket.sorekillteams.listener.FriendlyFireListener;
 import net.chumbucket.sorekillteams.listener.TeamChatListener;
 import net.chumbucket.sorekillteams.model.TeamInvites;
@@ -73,6 +74,9 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         registerCommand("sorekillteams", new AdminCommand(this));
         registerCommand("team", new TeamCommand(this));
         registerCommand("tc", new TeamChatCommand(this));
+
+        // ✅ 1.0.7: Tab completion for /team
+        registerTabCompleter("team", new TeamCommandTabCompleter(this));
 
         // Listeners
         getServer().getPluginManager().registerEvents(new FriendlyFireListener(this), this);
@@ -151,6 +155,15 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             return;
         }
         cmd.setExecutor(executor);
+    }
+
+    private void registerTabCompleter(String name, org.bukkit.command.TabCompleter completer) {
+        final PluginCommand cmd = getCommand(name);
+        if (cmd == null) {
+            getLogger().warning("TabCompleter for '/" + name + "' not registered (missing from plugin.yml?).");
+            return;
+        }
+        cmd.setTabCompleter(completer);
     }
 
     private void saveResourceIfMissing(String resourceName) {

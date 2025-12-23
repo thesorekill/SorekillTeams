@@ -18,11 +18,14 @@ import net.chumbucket.sorekillteams.storage.TeamStorage;
 import net.chumbucket.sorekillteams.util.Msg;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
+import org.bukkit.permissions.PermissionAttachmentInfo;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class SimpleTeamService implements TeamService {
+
+    private static final String MAX_PERM_PREFIX = "sorekillteams.max.";
 
     private final SorekillTeamsPlugin plugin;
     private final TeamStorage storage;
@@ -171,6 +174,12 @@ public final class SimpleTeamService implements TeamService {
             throw new TeamServiceException(TeamError.ONLY_OWNER_CAN_INVITE, "team_not_owner");
         }
 
+        // ✅ 1.0.7: pre-check capacity (permission-based max for owner)
+        int max = getTeamMaxMembers(t);
+        if (uniqueMemberCount(t) >= max) {
+            throw new TeamServiceException(TeamError.TEAM_FULL, "team_team_full");
+        }
+
         if (t.isMember(invitee)) throw new TeamServiceException(TeamError.ALREADY_MEMBER, "team_already_member");
         if (playerToTeam.containsKey(invitee)) throw new TeamServiceException(TeamError.INVITEE_IN_TEAM, "team_invitee_in_team");
 
@@ -249,7 +258,8 @@ public final class SimpleTeamService implements TeamService {
         ensureOwnerInMembers(t);
         dedupeMembers(t);
 
-        int max = Math.max(1, plugin.getConfig().getInt("teams.max_members_default", 4));
+        // ✅ 1.0.7: permission-based max for owner
+        int max = getTeamMaxMembers(t);
         int currentSize = uniqueMemberCount(t);
 
         if (currentSize >= max) {
@@ -307,7 +317,7 @@ public final class SimpleTeamService implements TeamService {
         return ta != null && ta.equals(tb);
     }
 
-    // ✅ 1.0.6: kick member (owner only)
+    // 1.0.6: kick member (owner only)
     @Override
     public void kickMember(UUID owner, UUID member) {
         if (owner == null || member == null) throw new TeamServiceException(TeamError.INVALID_PLAYER, "invalid_player");
@@ -321,7 +331,6 @@ public final class SimpleTeamService implements TeamService {
 
         if (!t.isMember(member)) throw new TeamServiceException(TeamError.TARGET_NOT_MEMBER, "team_kick_not_member");
 
-        // Remove
         t.getMembers().remove(member);
         ensureOwnerInMembers(t);
         dedupeMembers(t);
@@ -329,7 +338,6 @@ public final class SimpleTeamService implements TeamService {
         playerToTeam.remove(member);
         teamChatToggled.remove(member);
 
-        // Clear pending invites for kicked player (optional but reduces confusion)
         invites.clearTarget(member);
 
         safeSave();
@@ -342,7 +350,7 @@ public final class SimpleTeamService implements TeamService {
         ));
     }
 
-    // ✅ 1.0.6: transfer ownership (owner -> member)
+    // 1.0.6: transfer ownership (owner -> member)
     @Override
     public void transferOwnership(UUID owner, UUID newOwner) {
         if (owner == null || newOwner == null) throw new TeamServiceException(TeamError.INVALID_PLAYER, "invalid_player");
@@ -366,6 +374,40 @@ public final class SimpleTeamService implements TeamService {
         broadcastToTeam(t, plugin.msg().format(
                 "team_owner_transferred_broadcast",
                 "{owner}", newOwnerName,
+                "{team}", Msg.color(t.getName())
+        ));
+    }
+
+    // ✅ 1.0.7: rename team (owner only)
+    @Override
+    public void renameTeam(UUID owner, String newName) {
+        if (owner == null) throw new TeamServiceException(TeamError.INVALID_PLAYER, "invalid_player");
+
+        Team t = getTeamByPlayer(owner).orElseThrow(() ->
+                new TeamServiceException(TeamError.NOT_IN_TEAM, "team_not_in_team"));
+
+        if (!t.getOwner().equals(owner)) throw new TeamServiceException(TeamError.NOT_OWNER, "team_not_owner");
+
+        String cleaned = normalizeTeamNameOrThrow(newName);
+
+        // If name is effectively the same, no-op (still "success")
+        if (normalizeForCompare(t.getName()).equals(normalizeForCompare(cleaned))) {
+            return;
+        }
+
+        // Check taken excluding our team
+        if (teamNameTakenByOtherTeam(cleaned, t.getId())) {
+            throw new TeamServiceException(TeamError.TEAM_NAME_TAKEN, "team_name_taken");
+        }
+
+        String old = t.getName();
+        t.setName(cleaned);
+
+        safeSave();
+
+        broadcastToTeam(t, plugin.msg().format(
+                "team_renamed_broadcast",
+                "{old}", Msg.color(old),
                 "{team}", Msg.color(t.getName())
         ));
     }
@@ -516,8 +558,49 @@ public final class SimpleTeamService implements TeamService {
         return false;
     }
 
+    private boolean teamNameTakenByOtherTeam(String cleanedName, UUID ourTeamId) {
+        String norm = normalizeForCompare(cleanedName);
+        for (Team t : teams.values()) {
+            if (t == null || t.getId() == null || t.getName() == null) continue;
+            if (ourTeamId != null && ourTeamId.equals(t.getId())) continue;
+            if (normalizeForCompare(t.getName()).equals(norm)) return true;
+        }
+        return false;
+    }
+
     private String normalizeForCompare(String s) {
         if (s == null) return "";
         return s.trim().toLowerCase(Locale.ROOT).replaceAll("\\s{2,}", " ");
+    }
+
+    // ✅ 1.0.7: permission-based max members for team owner
+    private int getTeamMaxMembers(Team team) {
+        int def = Math.max(1, plugin.getConfig().getInt("teams.max_members_default", 4));
+        if (team == null || team.getOwner() == null) return def;
+
+        Player ownerOnline = Bukkit.getPlayer(team.getOwner());
+        if (ownerOnline == null) return def; // offline owner -> fallback
+
+        int best = def;
+
+        // Scan effective permissions for sorekillteams.max.N
+        for (PermissionAttachmentInfo pai : ownerOnline.getEffectivePermissions()) {
+            if (pai == null || !pai.getValue()) continue;
+            String perm = pai.getPermission();
+            if (perm == null) continue;
+            if (!perm.startsWith(MAX_PERM_PREFIX)) continue;
+
+            String num = perm.substring(MAX_PERM_PREFIX.length()).trim();
+            if (num.isEmpty()) continue;
+
+            try {
+                int n = Integer.parseInt(num);
+                if (n >= 1 && n <= 200) { // reasonable cap to avoid accidents
+                    if (n > best) best = n;
+                }
+            } catch (NumberFormatException ignored) {}
+        }
+
+        return best;
     }
 }

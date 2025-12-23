@@ -10,15 +10,20 @@
 
 package net.chumbucket.sorekillteams.model;
 
-import java.util.HashSet;
+import java.util.Collections;
+import java.util.LinkedHashSet;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
 public final class Team {
+
     private final UUID id;
     private String name;
     private UUID owner;
-    private final Set<UUID> members = new HashSet<>();
+
+    // Use LinkedHashSet for deterministic save order + stable /team info display
+    private final Set<UUID> members = new LinkedHashSet<>();
 
     // ✅ 1.0.5: per-team friendly fire
     private boolean friendlyFireEnabled = false;
@@ -31,26 +36,77 @@ public final class Team {
     }
 
     public Team(UUID id, String name, UUID owner, long createdAtMs) {
-        this.id = id;
-        this.name = name;
-        this.owner = owner;
+        this.id = Objects.requireNonNull(id, "id");
+        this.owner = Objects.requireNonNull(owner, "owner");
         this.createdAtMs = createdAtMs > 0 ? createdAtMs : System.currentTimeMillis();
+
+        setName(name);        // applies normalization + non-blank fallback
+        this.members.add(owner); // owner is always a member
+    }
+
+    public UUID getId() {
+        return id;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    /**
+     * Sets the team name. Keeps it safe even if a caller passes null/blank.
+     * Actual strict validation should happen in the service (TeamNameValidator).
+     */
+    public void setName(String name) {
+        String cleaned = (name == null) ? "" : name.trim().replaceAll("\\s{2,}", " ");
+        this.name = cleaned.isBlank() ? "Team" : cleaned;
+    }
+
+    public UUID getOwner() {
+        return owner;
+    }
+
+    /**
+     * Transfers ownership. Also guarantees the new owner is a member.
+     */
+    public void setOwner(UUID owner) {
+        this.owner = Objects.requireNonNull(owner, "owner");
         this.members.add(owner);
     }
 
-    public UUID getId() { return id; }
+    /**
+     * Mutable internal set (used by storage/service).
+     * If you ever want to lock this down later, switch this to unmodifiable
+     * and add addMember/removeMember methods.
+     */
+    public Set<UUID> getMembers() {
+        return members;
+    }
 
-    public String getName() { return name; }
-    public void setName(String name) { this.name = name; }
+    /** Read-only view (nice for commands that only display). */
+    public Set<UUID> getMembersView() {
+        return Collections.unmodifiableSet(members);
+    }
 
-    public UUID getOwner() { return owner; }
-    public void setOwner(UUID owner) { this.owner = owner; }
+    public boolean isMember(UUID uuid) {
+        return uuid != null && members.contains(uuid);
+    }
 
-    public Set<UUID> getMembers() { return members; }
-    public boolean isMember(UUID uuid) { return members.contains(uuid); }
+    public boolean isFriendlyFireEnabled() {
+        return friendlyFireEnabled;
+    }
 
-    public boolean isFriendlyFireEnabled() { return friendlyFireEnabled; }
-    public void setFriendlyFireEnabled(boolean friendlyFireEnabled) { this.friendlyFireEnabled = friendlyFireEnabled; }
+    public void setFriendlyFireEnabled(boolean friendlyFireEnabled) {
+        this.friendlyFireEnabled = friendlyFireEnabled;
+    }
 
-    public long getCreatedAtMs() { return createdAtMs; }
+    public long getCreatedAtMs() {
+        return createdAtMs;
+    }
+
+    /** Optional: convenience for rename broadcasts/logs. */
+    public String renameTo(String newName) {
+        String old = this.name;
+        setName(newName);
+        return old;
+    }
 }

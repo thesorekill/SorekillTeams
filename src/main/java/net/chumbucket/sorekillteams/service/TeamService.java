@@ -46,7 +46,10 @@ public interface TeamService {
     // Send a message to the sender's team chat
     void sendTeamChat(Player sender, String message);
 
-    // ✅ 1.0.6 additions
+    // 1.0.6 additions
     void kickMember(UUID owner, UUID member);
     void transferOwnership(UUID owner, UUID newOwner);
+
+    // ✅ 1.0.7 additions
+    void renameTeam(UUID owner, String newName);
 }
