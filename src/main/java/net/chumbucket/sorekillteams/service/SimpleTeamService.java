@@ -267,6 +267,7 @@ public final class SimpleTeamService implements TeamService {
             inv = active.get(0);
         }
 
+        // Should be redundant because listActive filters, but keep it safe:
         if (inv.isExpired(now)) {
             invites.remove(invitee, inv.getTeamId());
             throw new TeamServiceException(TeamError.INVITE_EXPIRED, "team_invite_expired");
@@ -274,8 +275,9 @@ public final class SimpleTeamService implements TeamService {
 
         Team t = teams.get(inv.getTeamId());
         if (t == null) {
+            // ✅ 1.1.2: Team is gone (disbanded/deleted). Remove the invite so it's not a ghost invite.
             invites.remove(invitee, inv.getTeamId());
-            return Optional.empty();
+            throw new TeamServiceException(TeamError.INVITE_EXPIRED, "team_invite_expired");
         }
 
         ensureOwnerInMembers(t);
@@ -283,6 +285,7 @@ public final class SimpleTeamService implements TeamService {
 
         int max = getTeamMaxMembers(t);
         if (uniqueMemberCount(t) >= max) {
+            // Team is full right now; keep invite so they can try later until it expires.
             throw new TeamServiceException(TeamError.TEAM_FULL, "team_team_full");
         }
 
@@ -310,7 +313,11 @@ public final class SimpleTeamService implements TeamService {
 
         long now = System.currentTimeMillis();
         List<TeamInvite> active = invites.listActive(invitee, now);
-        if (active.isEmpty()) return false;
+        if (active.isEmpty()) {
+            // ✅ 1.1.2: best-effort cleanup of any stale entries
+            invites.clearTarget(invitee);
+            return false;
+        }
 
         if (teamId != null && teamId.isPresent()) {
             return invites.remove(invitee, teamId.get());

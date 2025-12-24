@@ -1,5 +1,5 @@
 name: SorekillTeams
-version: 1.1.0
+version: 1.1.2
 main: net.chumbucket.sorekillteams.SorekillTeamsPlugin
 api-version: 1.21
 author: Sorekill
@@ -24,7 +24,7 @@ commands:
 
   sorekillteams:
     description: SorekillTeams admin command
-    usage: /sorekillteams reload|version
+    usage: /sorekillteams reload|version|disband|setowner|kick|info
     aliases: [st]
     permission: sorekillteams.admin
 
@@ -49,10 +49,6 @@ permissions:
 
   sorekillteams.invite:
     description: Invite players to your team
-    default: true
-
-  sorekillteams.invites:
-    description: View your pending team invites (/team invites)
     default: true
 
   sorekillteams.accept:
@@ -120,7 +116,7 @@ permissions:
     default: op
 
   # -------------------------
-  # Max members permission pattern (existing behavior)
+  # Max members permission pattern
   # Example: sorekillteams.max.6 gives max members 6
   # -------------------------
   sorekillteams.max.*:
@@ -131,7 +127,7 @@ permissions:
   # Admin action nodes
   # -------------------------
   sorekillteams.admin.reload:
-    description: Reload config/messages
+    description: Reload config/messages/storage
     default: op
 
   sorekillteams.admin.version:

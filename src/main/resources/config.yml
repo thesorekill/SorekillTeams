@@ -120,19 +120,29 @@ chat:
     format: "&8[&cTEAM SPY&8] &8(&c{team}&8) &f{player}&8: &7{message}"
 
 friendly_fire:
-  # Friendly fire behavior:
-  # false = plugin will block damage between teammates
-  # true  = allow teammates to damage each other (no blocking)
+  # Global friendly fire switch:
+  # - true  = do NOT interfere (teammates can hurt each other normally)
+  # - false = plugin enforces teammate rules below
   enabled: false
 
-  # Whether to include certain damage sources when blocking is active
+  # When enabled=false and the attacker+victim are teammates AND team FF is OFF:
+  # How much damage should go through (0-100)?
+  # - 0   = fully block teammate damage (classic "no friendly fire")
+  # - 1-99 = scale damage (e.g., 25 = quarter damage)
+  # - 100 = full damage (effectively no reduction)
+  teammate_damage: 0
+
+  # Whether to include certain damage sources when blocking/scaling is active
   include_projectiles: true
   include_area_effect_clouds: true
   include_explosives: true
 
-  # 1.0.8+ additional sources
-  include_potions: true     # splash + lingering potion damage
+  # Additional sources
+  include_potions: true     # splash + lingering potion damage (harmful only; beneficial ignored)
   include_tridents: true
+
+  # Optional: extra logging for friendly fire decisions
+  # debug: false
 
   message:
     enabled: true

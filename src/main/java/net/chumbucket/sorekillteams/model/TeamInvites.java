@@ -149,12 +149,26 @@ public final class TeamInvites {
         Map<UUID, TeamInvite> inner = invitesByTarget.get(target);
         if (inner == null || inner.isEmpty()) return 0;
 
-        int before = inner.size();
-        inner.values().removeIf(inv -> inv == null || inv.isExpired(nowMs));
-        int after = inner.size();
+        int purged = 0;
+
+        // Safer than values().removeIf(...) for CHM views across forks/JDKs:
+        for (Map.Entry<UUID, TeamInvite> entry : inner.entrySet()) {
+            UUID teamId = entry.getKey();
+            TeamInvite inv = entry.getValue();
+
+            if (teamId == null || inv == null || inv.isExpired(nowMs)) {
+                // remove only if still mapped to the same value
+                if (teamId != null && inner.remove(teamId, inv)) {
+                    purged++;
+                } else if (teamId == null) {
+                    // very rare: null key shouldn't happen, but don't trust it
+                    purged++;
+                }
+            }
+        }
 
         cleanupIfEmpty(target, inner);
-        return before - after;
+        return purged;
     }
 
     /** @return number of invites purged across all targets */
@@ -183,9 +197,26 @@ public final class TeamInvites {
         invitesByTarget.remove(target);
     }
 
+    /** Total invites across all targets (best-effort snapshot). */
+    public int totalInvites() {
+        int sum = 0;
+        for (Map<UUID, TeamInvite> inner : invitesByTarget.values()) {
+            if (inner != null) sum += inner.size();
+        }
+        return sum;
+    }
+
+    /** Number of targets with at least one invite. */
+    public int targetCount() {
+        return invitesByTarget.size();
+    }
+
     public String debugSummary() {
-        return invitesByTarget.entrySet().stream()
-                .sorted(Comparator.comparing(e -> e.getKey().toString()))
+        // stable snapshot
+        List<Map.Entry<UUID, Map<UUID, TeamInvite>>> entries = new ArrayList<>(invitesByTarget.entrySet());
+        entries.sort(Comparator.comparing(e -> e.getKey().toString()));
+
+        return entries.stream()
                 .map(e -> e.getKey() + ":" + (e.getValue() == null ? 0 : e.getValue().size()))
                 .collect(Collectors.joining(", "));
     }
