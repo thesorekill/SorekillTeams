@@ -30,11 +30,50 @@ commands:
 
 permissions:
   # -------------------------
+  # Wildcard
+  # -------------------------
+  sorekillteams.*:
+    description: Grants access to all SorekillTeams permissions
+    default: op
+    children:
+      sorekillteams.use: true
+      sorekillteams.admin: true
+      sorekillteams.reload: true
+      sorekillteams.create: true
+      sorekillteams.invite: true
+      sorekillteams.invites: true
+      sorekillteams.accept: true
+      sorekillteams.deny: true
+      sorekillteams.leave: true
+      sorekillteams.disband: true
+      sorekillteams.info: true
+      sorekillteams.kick: true
+      sorekillteams.transfer: true
+      sorekillteams.rename: true
+      sorekillteams.ff: true
+      sorekillteams.teamchat: true
+      sorekillteams.chat: true
+      sorekillteams.spy: true
+      sorekillteams.friendlyfire.bypass: true
+      sorekillteams.max.*: true
+      sorekillteams.admin.reload: true
+      sorekillteams.admin.version: true
+      sorekillteams.admin.disband: true
+      sorekillteams.admin.setowner: true
+      sorekillteams.admin.kick: true
+      sorekillteams.admin.info: true
+      sorekillteams.homes: true
+      sorekillteams.home: true
+      sorekillteams.sethome: true
+      sorekillteams.delhome: true
+      sorekillteams.home.bypasscooldown: true
+      
+  # -------------------------
   # Base
   # -------------------------
   sorekillteams.use:
     description: Allows using /team
-    default: true
+    default: false
 
   sorekillteams.admin:
     description: Allows using /sorekillteams (admin controls)
@@ -53,66 +92,66 @@ permissions:
   # -------------------------
   sorekillteams.create:
     description: Create a team
-    default: true
+    default: false
 
   sorekillteams.invite:
     description: Invite players to your team (owner)
-    default: true
+    default: false
 
   # 1.1.3: invite list has its own permission
   sorekillteams.invites:
     description: View your pending team invites
-    default: true
+    default: false
 
   sorekillteams.accept:
     description: Accept team invites
-    default: true
+    default: false
 
   sorekillteams.deny:
     description: Deny team invites
-    default: true
+    default: false
 
   sorekillteams.leave:
     description: Leave your team
-    default: true
+    default: false
 
   sorekillteams.disband:
     description: Disband your team (owner)
-    default: true
+    default: false
 
   sorekillteams.info:
     description: View team info
-    default: true
+    default: false
 
   sorekillteams.kick:
     description: Kick a member (owner)
-    default: true
+    default: false
 
   sorekillteams.transfer:
     description: Transfer team ownership (owner)
-    default: true
+    default: false
 
   sorekillteams.rename:
     description: Rename your team (owner)
-    default: true
+    default: false
 
   sorekillteams.ff:
     description: Toggle friendly fire for your team (owner)
-    default: true
+    default: false
 
   # -------------------------
   # Team chat
   # -------------------------
   sorekillteams.teamchat:
     description: Use team chat features (toggle/team chat commands)
-    default: true
+    default: false
 
   # Legacy node (backwards compatible with older setups using sorekillteams.chat)
   sorekillteams.chat:
     description: Legacy permission node (use sorekillteams.teamchat instead)
     default: false
     children:
-      sorekillteams.teamchat: true
+      sorekillteams.teamchat: false
 
   # -------------------------
   # Team spy
@@ -168,19 +207,19 @@ permissions:
   # -------------------------
   sorekillteams.homes:
     description: View/list team homes
-    default: true
+    default: false
 
   sorekillteams.home:
     description: Teleport to a team home
-    default: true
+    default: false
 
   sorekillteams.sethome:
     description: Set a team home (owner only)
-    default: true
+    default: false
 
   sorekillteams.delhome:
     description: Delete a team home (owner only)
-    default: true
+    default: false
 
   sorekillteams.home.bypasscooldown:
     description: Bypass team home teleport cooldowns
