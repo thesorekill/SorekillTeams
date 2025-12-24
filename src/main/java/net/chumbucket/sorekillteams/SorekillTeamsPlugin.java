@@ -29,6 +29,7 @@ import net.chumbucket.sorekillteams.update.UpdateChecker;
 import net.chumbucket.sorekillteams.update.UpdateNotifyListener;
 import net.chumbucket.sorekillteams.util.Debug;
 import net.chumbucket.sorekillteams.util.Msg;
+import net.chumbucket.sorekillteams.util.Actionbar;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.PluginCommand;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -39,6 +40,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class SorekillTeamsPlugin extends JavaPlugin {
 
     private Msg msg;
+    private Actionbar actionbar;
     private Debug debug;
 
     private TeamStorage storage;
@@ -66,6 +68,7 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         saveResourceIfMissing(getMessagesFileNameSafe());
 
         this.msg = new Msg(this);
+        this.actionbar = new Actionbar(this);
         this.debug = new Debug(this);
 
         this.storage = new YamlTeamStorage(this);
@@ -358,6 +361,7 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     public String getMessagesFileName() { return getMessagesFileNameSafe(); }
 
     public Msg msg() { return msg; }
+    public Actionbar actionbar() { return actionbar; }
     public Debug debug() { return debug; }
 
     public TeamService teams() { return teams; }

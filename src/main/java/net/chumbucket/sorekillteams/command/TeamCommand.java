@@ -16,11 +16,10 @@ import net.chumbucket.sorekillteams.model.TeamHome;
 import net.chumbucket.sorekillteams.model.TeamInvite;
 import net.chumbucket.sorekillteams.service.TeamHomeService;
 import net.chumbucket.sorekillteams.service.TeamServiceException;
+import net.chumbucket.sorekillteams.util.Actionbar;
 import net.chumbucket.sorekillteams.util.CommandErrors;
 import net.chumbucket.sorekillteams.util.Msg;
 import net.chumbucket.sorekillteams.util.TeamNameValidator;
-import net.md_5.bungee.api.ChatMessageType;
-import net.md_5.bungee.api.chat.TextComponent;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Location;
@@ -35,7 +34,6 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityDamageEvent;
 
-import java.lang.reflect.Method;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -46,6 +44,7 @@ public final class TeamCommand implements CommandExecutor, Listener {
 
     private final SorekillTeamsPlugin plugin;
     private final TeamNameValidator nameValidator;
+    private final Actionbar actionbar;
 
     private static final DateTimeFormatter TEAM_CREATED_FMT =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm z").withZone(ZoneId.systemDefault());
@@ -72,6 +71,7 @@ public final class TeamCommand implements CommandExecutor, Listener {
     public TeamCommand(SorekillTeamsPlugin plugin) {
         this.plugin = plugin;
         this.nameValidator = new TeamNameValidator(plugin);
+        this.actionbar = plugin.actionbar(); // ✅ centralized actionbar util
 
         // Register listener so hit-cancel works
         Bukkit.getPluginManager().registerEvents(this, plugin);
@@ -432,7 +432,6 @@ public final class TeamCommand implements CommandExecutor, Listener {
                     List<TeamHome> homes = hs.listHomes(team.getId());
                     if (homes == null) homes = List.of();
 
-                    // ✅ Fix: remove possible nulls so homes.get(0) is never null (eliminates IDE NPE warning)
                     homes = homes.stream().filter(Objects::nonNull).toList();
 
                     if (homes.isEmpty()) {
@@ -455,12 +454,12 @@ public final class TeamCommand implements CommandExecutor, Listener {
                             }
 
                             if (!passesProxyRestriction(p, only)) return true;
-
                             if (!bypassCooldown && !passesPlayerCooldown(p)) return true;
 
                             int warmupSeconds = Math.max(0, plugin.getConfig().getInt("homes.warmup_seconds", 0));
                             if (!bypassWarmup && warmupSeconds > 0) {
-                                startActionbarWarmupTeleport(p, team.getId(), key, warmupSeconds, () -> hs.getHome(team.getId(), key).orElse(null));
+                                startActionbarWarmupTeleport(p, team.getId(), key, warmupSeconds,
+                                        () -> hs.getHome(team.getId(), key).orElse(null));
                                 return true;
                             }
 
@@ -504,12 +503,12 @@ public final class TeamCommand implements CommandExecutor, Listener {
                     }
 
                     if (!passesProxyRestriction(p, h)) return true;
-
                     if (!bypassCooldown && !passesPlayerCooldown(p)) return true;
 
                     int warmupSeconds = Math.max(0, plugin.getConfig().getInt("homes.warmup_seconds", 0));
                     if (!bypassWarmup && warmupSeconds > 0) {
-                        startActionbarWarmupTeleport(p, team.getId(), key, warmupSeconds, () -> hs.getHome(team.getId(), key).orElse(null));
+                        startActionbarWarmupTeleport(p, team.getId(), key, warmupSeconds,
+                                () -> hs.getHome(team.getId(), key).orElse(null));
                         return true;
                     }
 
@@ -1023,14 +1022,14 @@ public final class TeamCommand implements CommandExecutor, Listener {
         cancelWarmup(p.getUniqueId());
 
         // actionbar cancel + sound
-        sendActionbar(p, "actionbar.team_home_cancelled_move");
+        if (actionbar != null) actionbar.send(p, "actionbar.team_home_cancelled_move");
         p.playSound(p.getLocation(), CANCEL_SOUND, 1.0f, 1.0f);
 
         // chat cancel
         plugin.msg().send(p, "team_home_cancelled_move");
 
         // clear the bar shortly after
-        Bukkit.getScheduler().runTaskLater(plugin, () -> clearActionbar(p), 30L);
+        Bukkit.getScheduler().runTaskLater(plugin, () -> { if (actionbar != null) actionbar.clear(p); }, 30L);
     }
 
     // ============================================================
@@ -1074,7 +1073,7 @@ public final class TeamCommand implements CommandExecutor, Listener {
             // still in same team?
             Team currentTeam = plugin.teams().getTeamByPlayer(playerId).orElse(null);
             if (currentTeam == null || !teamId.equals(currentTeam.getId())) {
-                clearActionbar(live);
+                if (actionbar != null) actionbar.clear(live);
                 cancelWarmup(playerId);
                 return;
             }
@@ -1084,17 +1083,19 @@ public final class TeamCommand implements CommandExecutor, Listener {
             if (sess != null && hasMoved(sess.startLoc, live.getLocation())) {
                 cancelWarmup(playerId);
 
-                sendActionbar(live, "actionbar.team_home_cancelled_move");
+                if (actionbar != null) actionbar.send(live, "actionbar.team_home_cancelled_move");
                 live.playSound(live.getLocation(), CANCEL_SOUND, 1.0f, 1.0f);
 
                 plugin.msg().send(live, "team_home_cancelled_move");
 
-                Bukkit.getScheduler().runTaskLater(plugin, () -> clearActionbar(live), 30L);
+                Bukkit.getScheduler().runTaskLater(plugin, () -> { if (actionbar != null) actionbar.clear(live); }, 30L);
                 return;
             }
 
             // show countdown
-            sendActionbar(live, "actionbar.team_home_warmup", "{seconds}", String.valueOf(remaining[0]));
+            if (actionbar != null) {
+                actionbar.send(live, "actionbar.team_home_warmup", "{seconds}", String.valueOf(remaining[0]));
+            }
 
             // tick sound each second
             live.playSound(live.getLocation(), WARMUP_TICK_SOUND, 1.0f, 1.0f);
@@ -1103,14 +1104,14 @@ public final class TeamCommand implements CommandExecutor, Listener {
             if (remaining[0] <= 0) {
                 TeamHome hh = homeSupplier.get();
                 if (hh == null) {
-                    clearActionbar(live);
+                    if (actionbar != null) actionbar.clear(live);
                     cancelWarmup(playerId);
                     return;
                 }
 
                 Location dest = hh.toLocationOrNull();
                 if (dest == null) {
-                    clearActionbar(live);
+                    if (actionbar != null) actionbar.clear(live);
                     plugin.msg().send(live, "team_home_world_missing", "{home}", hh.getDisplayName());
                     cancelWarmup(playerId);
                     return;
@@ -1121,7 +1122,7 @@ public final class TeamCommand implements CommandExecutor, Listener {
 
                 live.playSound(live.getLocation(), TELEPORT_SOUND, 1.0f, 1.0f);
 
-                clearActionbar(live);
+                if (actionbar != null) actionbar.clear(live);
                 plugin.msg().send(live, "team_home_teleported", "{home}", hh.getDisplayName());
 
                 cancelWarmup(playerId);
@@ -1154,11 +1155,6 @@ public final class TeamCommand implements CommandExecutor, Listener {
 
         // small tolerance for jitter
         return distSq > 0.0004; // ~0.02 blocks
-    }
-
-    private void clearActionbar(Player p) {
-        if (p == null) return;
-        p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent(""));
     }
 
     // ============================================================
@@ -1204,60 +1200,6 @@ public final class TeamCommand implements CommandExecutor, Listener {
             return false;
         }
         return true;
-    }
-
-    // ============================================================
-    // Actionbar message helper (supports nested "actionbar.*")
-    // ============================================================
-
-    private void sendActionbar(Player p, String key, String... placeholders) {
-        String text = resolveMessageString(key);
-        if (text == null || text.isBlank()) return;
-
-        String out = text;
-        if (placeholders != null) {
-            for (int i = 0; i + 1 < placeholders.length; i += 2) {
-                String k = placeholders[i];
-                String v = placeholders[i + 1];
-                if (k != null && v != null) out = out.replace(k, v);
-            }
-        }
-
-        out = out.replace("{prefix}", plugin.msg().prefix());
-        String colored = Msg.color(out);
-
-        p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent(colored));
-    }
-
-    /**
-     * Best-effort: fetch a raw message string from your message manager.
-     * Supports dotted keys like "actionbar.team_home_warmup" as well as a flat fallback.
-     */
-    private String resolveMessageString(String key) {
-        if (key == null || key.isBlank()) return null;
-
-        Object msg = plugin.msg();
-        if (msg == null) return null;
-
-        for (String methodName : List.of("get", "raw", "message", "resolve", "string")) {
-            try {
-                Method m = msg.getClass().getMethod(methodName, String.class);
-                Object val = m.invoke(msg, key);
-                if (val instanceof String s) return s;
-            } catch (Exception ignored) {}
-        }
-
-        // fallback: actionbar.team_home_warmup -> actionbar_team_home_warmup
-        String flat = key.replace('.', '_');
-        for (String methodName : List.of("get", "raw", "message", "resolve", "string")) {
-            try {
-                Method m = msg.getClass().getMethod(methodName, String.class);
-                Object val = m.invoke(msg, flat);
-                if (val instanceof String s) return s;
-            } catch (Exception ignored) {}
-        }
-
-        return null;
     }
 
     private boolean trySendMsg(Player p, String key, String... placeholders) {
