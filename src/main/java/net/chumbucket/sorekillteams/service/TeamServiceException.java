@@ -26,16 +26,16 @@ public final class TeamServiceException extends RuntimeException {
 
     public TeamServiceException(TeamError code) {
         super(code.name());
-        this.code = Objects.requireNonNull(code);
+        this.code = Objects.requireNonNull(code, "code");
         this.messageKey = null;
         this.pairs = new String[0];
     }
 
     public TeamServiceException(TeamError code, String messageKey, String... pairs) {
         super(code.name());
-        this.code = Objects.requireNonNull(code);
+        this.code = Objects.requireNonNull(code, "code");
         this.messageKey = messageKey;
-        this.pairs = pairs == null ? new String[0] : pairs;
+        this.pairs = (pairs == null) ? new String[0] : pairs;
     }
 
     public TeamError code() {

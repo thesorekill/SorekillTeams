@@ -39,6 +39,7 @@ public final class AdminCommand implements CommandExecutor {
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
 
+        // Base admin gate (umbrella node)
         if (!sender.hasPermission("sorekillteams.admin")) {
             plugin.msg().send(sender, "no_permission");
             return true;
@@ -46,132 +47,160 @@ public final class AdminCommand implements CommandExecutor {
 
         if (args.length == 0) {
             plugin.msg().send(sender, "admin_usage");
-            sender.sendMessage(Msg.color(plugin.msg().prefix() + "&7Admin: /" + label + " disband|setowner|kick|info"));
+            sender.sendMessage(Msg.color(plugin.msg().prefix()
+                    + "&7Admin: /" + label + " reload|version|disband|setowner|kick|info"));
             return true;
         }
 
-        final boolean debug = plugin.getConfig().getBoolean("commands.debug", false);
+        final boolean debug = plugin.getConfig().getBoolean("chat.debug", false);
         final String sub = args[0].toLowerCase(Locale.ROOT);
 
-        switch (sub) {
-            case "reload", "rl", "r" -> {
-                if (!requirePerm(sender, "sorekillteams.admin.reload")) return true;
-                if (debug) plugin.getLogger().info("[ADMIN-DBG] reload by " + sender.getName());
-                plugin.reloadEverything();
-                plugin.msg().send(sender, "reloaded");
-                return true;
+        try {
+            switch (sub) {
+                case "reload", "rl", "r" -> {
+                    if (!requirePerm(sender, "sorekillteams.admin.reload")) return true;
+
+                    if (debug) plugin.getLogger().info("[ADMIN-DBG] reload by " + sender.getName());
+                    plugin.reloadEverything();
+                    plugin.msg().send(sender, "reloaded");
+                    return true;
+                }
+
+                case "version", "ver", "v" -> {
+                    // ✅ FIX: now checks the new granular node you added to plugin.yml
+                    if (!requirePerm(sender, "sorekillteams.admin.version")) return true;
+
+                    if (debug) plugin.getLogger().info("[ADMIN-DBG] version by " + sender.getName());
+                    plugin.msg().send(sender, "version", "{version}", plugin.getDescription().getVersion());
+                    return true;
+                }
+
+                case "disband" -> {
+                    if (!requirePerm(sender, "sorekillteams.admin.disband")) return true;
+
+                    if (args.length < 2) {
+                        sender.sendMessage(Msg.color(plugin.msg().prefix()
+                                + "&7Usage: /" + label + " disband <team>"));
+                        return true;
+                    }
+
+                    String teamName = joinArgsAfter(args, 0);
+                    Team t = plugin.teams().getTeamByName(teamName).orElse(null);
+                    if (t == null) {
+                        sender.sendMessage(Msg.color(plugin.msg().prefix()
+                                + "&cTeam not found: &f" + teamName));
+                        return true;
+                    }
+
+                    plugin.teams().adminDisbandTeam(t.getId());
+                    sender.sendMessage(Msg.color(plugin.msg().prefix()
+                            + "&aDisbanded team &c" + t.getName() + "&a."));
+
+                    if (debug) plugin.getLogger().info("[ADMIN-DBG] disband team=" + t.getName() + " by " + sender.getName());
+                    return true;
+                }
+
+                case "setowner" -> {
+                    if (!requirePerm(sender, "sorekillteams.admin.setowner")) return true;
+
+                    if (args.length < 3) {
+                        sender.sendMessage(Msg.color(plugin.msg().prefix()
+                                + "&7Usage: /" + label + " setowner <team> <playerOnline|uuid>"));
+                        return true;
+                    }
+
+                    String targetToken = args[args.length - 1];
+                    String teamName = String.join(" ", Arrays.copyOfRange(args, 1, args.length - 1)).trim();
+
+                    Team t = plugin.teams().getTeamByName(teamName).orElse(null);
+                    if (t == null) {
+                        sender.sendMessage(Msg.color(plugin.msg().prefix()
+                                + "&cTeam not found: &f" + teamName));
+                        return true;
+                    }
+
+                    UUID newOwner = resolvePlayerUuidOnlineOrUuid(targetToken);
+                    if (newOwner == null) {
+                        sender.sendMessage(Msg.color(plugin.msg().prefix()
+                                + "&cPlayer must be online or a UUID: &f" + targetToken));
+                        return true;
+                    }
+
+                    plugin.teams().adminSetOwner(t.getId(), newOwner);
+                    sender.sendMessage(Msg.color(plugin.msg().prefix()
+                            + "&aSet owner of &c" + t.getName() + "&a to &f" + nameOf(newOwner) + "&a."));
+
+                    if (debug) plugin.getLogger().info("[ADMIN-DBG] setowner team=" + t.getName() + " newOwner=" + newOwner + " by " + sender.getName());
+                    return true;
+                }
+
+                case "kick" -> {
+                    if (!requirePerm(sender, "sorekillteams.admin.kick")) return true;
+
+                    if (args.length < 2) {
+                        sender.sendMessage(Msg.color(plugin.msg().prefix()
+                                + "&7Usage: /" + label + " kick <playerOnline|uuid>"));
+                        return true;
+                    }
+
+                    UUID target = resolvePlayerUuidOnlineOrUuid(args[1]);
+                    if (target == null) {
+                        sender.sendMessage(Msg.color(plugin.msg().prefix()
+                                + "&cPlayer must be online or a UUID: &f" + args[1]));
+                        return true;
+                    }
+
+                    Team before = plugin.teams().getTeamByPlayer(target).orElse(null);
+                    if (before == null) {
+                        sender.sendMessage(Msg.color(plugin.msg().prefix()
+                                + "&eThat player is not in a team."));
+                        return true;
+                    }
+
+                    plugin.teams().adminKickPlayer(target);
+
+                    sender.sendMessage(Msg.color(plugin.msg().prefix()
+                            + "&aKicked &f" + nameOf(target) + "&a from &c" + before.getName() + "&a."));
+
+                    if (debug) plugin.getLogger().info("[ADMIN-DBG] kick player=" + target + " from team=" + before.getName() + " by " + sender.getName());
+                    return true;
+                }
+
+                case "info" -> {
+                    if (!requirePerm(sender, "sorekillteams.admin.info")) return true;
+
+                    if (args.length < 2) {
+                        sender.sendMessage(Msg.color(plugin.msg().prefix()
+                                + "&7Usage: /" + label + " info <team>"));
+                        return true;
+                    }
+
+                    String teamName = joinArgsAfter(args, 0);
+                    Team t = plugin.teams().getTeamByName(teamName).orElse(null);
+                    if (t == null) {
+                        sender.sendMessage(Msg.color(plugin.msg().prefix()
+                                + "&cTeam not found: &f" + teamName));
+                        return true;
+                    }
+
+                    sendTeamInfo(sender, t);
+
+                    if (debug) plugin.getLogger().info("[ADMIN-DBG] info team=" + t.getName() + " by " + sender.getName());
+                    return true;
+                }
+
+                default -> {
+                    plugin.msg().send(sender, "unknown_command");
+                    plugin.msg().send(sender, "admin_usage");
+                    sender.sendMessage(Msg.color(plugin.msg().prefix()
+                            + "&7Admin: /" + label + " reload|version|disband|setowner|kick|info"));
+                    return true;
+                }
             }
-
-            case "version", "ver", "v" -> {
-                if (debug) plugin.getLogger().info("[ADMIN-DBG] version by " + sender.getName());
-                plugin.msg().send(sender, "version", "{version}", plugin.getDescription().getVersion());
-                return true;
-            }
-
-            case "disband" -> {
-                if (!requirePerm(sender, "sorekillteams.admin.disband")) return true;
-                if (args.length < 2) {
-                    sender.sendMessage(Msg.color(plugin.msg().prefix() + "&7Usage: /" + label + " disband <team>"));
-                    return true;
-                }
-
-                String teamName = joinArgsAfter(args, 0);
-                Team t = plugin.teams().getTeamByName(teamName).orElse(null);
-                if (t == null) {
-                    sender.sendMessage(Msg.color(plugin.msg().prefix() + "&cTeam not found: &f" + teamName));
-                    return true;
-                }
-
-                plugin.teams().adminDisbandTeam(t.getId());
-                sender.sendMessage(Msg.color(plugin.msg().prefix() + "&aDisbanded team &c" + t.getName() + "&a."));
-
-                if (debug) plugin.getLogger().info("[ADMIN-DBG] disband team=" + t.getName() + " by " + sender.getName());
-                return true;
-            }
-
-            case "setowner" -> {
-                if (!requirePerm(sender, "sorekillteams.admin.setowner")) return true;
-                if (args.length < 3) {
-                    sender.sendMessage(Msg.color(plugin.msg().prefix() + "&7Usage: /" + label + " setowner <team> <playerOnline|uuid>"));
-                    return true;
-                }
-
-                String targetToken = args[args.length - 1];
-                String teamName = String.join(" ", Arrays.copyOfRange(args, 1, args.length - 1)).trim();
-
-                Team t = plugin.teams().getTeamByName(teamName).orElse(null);
-                if (t == null) {
-                    sender.sendMessage(Msg.color(plugin.msg().prefix() + "&cTeam not found: &f" + teamName));
-                    return true;
-                }
-
-                UUID newOwner = resolvePlayerUuidOnlineOrUuid(targetToken);
-                if (newOwner == null) {
-                    sender.sendMessage(Msg.color(plugin.msg().prefix() + "&cPlayer must be online or a UUID: &f" + targetToken));
-                    return true;
-                }
-
-                plugin.teams().adminSetOwner(t.getId(), newOwner);
-                sender.sendMessage(Msg.color(plugin.msg().prefix() + "&aSet owner of &c" + t.getName() + "&a to &f" + nameOf(newOwner) + "&a."));
-
-                if (debug) plugin.getLogger().info("[ADMIN-DBG] setowner team=" + t.getName() + " newOwner=" + newOwner + " by " + sender.getName());
-                return true;
-            }
-
-            case "kick" -> {
-                if (!requirePerm(sender, "sorekillteams.admin.kick")) return true;
-                if (args.length < 2) {
-                    sender.sendMessage(Msg.color(plugin.msg().prefix() + "&7Usage: /" + label + " kick <playerOnline|uuid>"));
-                    return true;
-                }
-
-                UUID target = resolvePlayerUuidOnlineOrUuid(args[1]);
-                if (target == null) {
-                    sender.sendMessage(Msg.color(plugin.msg().prefix() + "&cPlayer must be online or a UUID: &f" + args[1]));
-                    return true;
-                }
-
-                Team before = plugin.teams().getTeamByPlayer(target).orElse(null);
-                if (before == null) {
-                    sender.sendMessage(Msg.color(plugin.msg().prefix() + "&eThat player is not in a team."));
-                    return true;
-                }
-
-                plugin.teams().adminKickPlayer(target);
-
-                sender.sendMessage(Msg.color(plugin.msg().prefix()
-                        + "&aKicked &f" + nameOf(target) + "&a from &c" + before.getName() + "&a."));
-
-                if (debug) plugin.getLogger().info("[ADMIN-DBG] kick player=" + target + " from team=" + before.getName() + " by " + sender.getName());
-                return true;
-            }
-
-            case "info" -> {
-                if (!requirePerm(sender, "sorekillteams.admin.info")) return true;
-                if (args.length < 2) {
-                    sender.sendMessage(Msg.color(plugin.msg().prefix() + "&7Usage: /" + label + " info <team>"));
-                    return true;
-                }
-
-                String teamName = joinArgsAfter(args, 0);
-                Team t = plugin.teams().getTeamByName(teamName).orElse(null);
-                if (t == null) {
-                    sender.sendMessage(Msg.color(plugin.msg().prefix() + "&cTeam not found: &f" + teamName));
-                    return true;
-                }
-
-                sendTeamInfo(sender, t);
-
-                if (debug) plugin.getLogger().info("[ADMIN-DBG] info team=" + t.getName() + " by " + sender.getName());
-                return true;
-            }
-
-            default -> {
-                plugin.msg().send(sender, "unknown_command");
-                plugin.msg().send(sender, "admin_usage");
-                sender.sendMessage(Msg.color(plugin.msg().prefix() + "&7Admin: /" + label + " disband|setowner|kick|info"));
-                return true;
-            }
+        } catch (Exception ex) {
+            sender.sendMessage(Msg.color(plugin.msg().prefix() + "&cAn error occurred."));
+            plugin.getLogger().severe("Admin command error (" + sub + "): " + ex.getClass().getSimpleName() + ": " + ex.getMessage());
+            return true;
         }
     }
 

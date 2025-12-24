@@ -66,7 +66,7 @@ public final class YamlTeamStorage implements TeamStorage {
             }
 
             try {
-                final UUID id = safeUuid(key);
+                final UUID id = safeUuidString(key);
                 if (id == null) {
                     plugin.getLogger().warning("Skipping team with invalid UUID key: " + key);
                     skipped++;
@@ -76,7 +76,7 @@ public final class YamlTeamStorage implements TeamStorage {
                 final String nameRaw = tSec.getString("name", "Team");
                 final String name = (nameRaw == null || nameRaw.isBlank()) ? "Team" : nameRaw.trim();
 
-                final UUID owner = safeUuid(tSec.getString("owner", null));
+                final UUID owner = safeUuidString(tSec.getString("owner", null));
                 if (owner == null) {
                     plugin.getLogger().warning("Skipping team " + id + " ('" + name + "') due to missing/invalid owner UUID");
                     skipped++;
@@ -86,15 +86,16 @@ public final class YamlTeamStorage implements TeamStorage {
                 final List<String> membersStr = tSec.getStringList("members");
                 final Set<UUID> members = new LinkedHashSet<>();
                 for (String ms : membersStr) {
-                    UUID m = safeUuid(ms);
+                    UUID m = safeUuidString(ms);
                     if (m != null) members.add(m);
                 }
 
                 // Ensure owner is included
                 members.add(owner);
 
-                // created date (fallback: "now" if missing)
+                // created date (fallback: "now" if missing/invalid)
                 long createdAt = tSec.getLong("created_at", System.currentTimeMillis());
+                if (createdAt <= 0) createdAt = System.currentTimeMillis();
 
                 final Team t = new Team(id, name, owner, createdAt);
 
@@ -102,7 +103,7 @@ public final class YamlTeamStorage implements TeamStorage {
                 t.getMembers().clear();
                 t.getMembers().addAll(members);
 
-                // team FF toggle
+                // team FF toggle (stored as friendly_fire)
                 t.setFriendlyFireEnabled(tSec.getBoolean("friendly_fire", false));
 
                 simple.putLoadedTeam(t);
@@ -213,7 +214,7 @@ public final class YamlTeamStorage implements TeamStorage {
             long createdAtMs
     ) {}
 
-    private UUID safeUuid(String s) {
+    private UUID safeUuidString(String s) {
         if (s == null) return null;
         final String v = s.trim();
         if (v.isEmpty()) return null;

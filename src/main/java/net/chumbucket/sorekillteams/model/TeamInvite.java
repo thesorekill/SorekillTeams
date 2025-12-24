@@ -17,10 +17,10 @@ public final class TeamInvite {
 
     private final UUID teamId;
     private final String teamName;
-    private final UUID inviter;        // who sent it
-    private final UUID target;         // who receives it
-    private final long createdAtMs;    // System.currentTimeMillis()
-    private final long expiresAtMs;    // createdAtMs + ttl
+    private final UUID inviter;
+    private final UUID target;
+    private final long createdAtMs;
+    private final long expiresAtMs;
 
     public TeamInvite(UUID teamId,
                       String teamName,
@@ -28,10 +28,10 @@ public final class TeamInvite {
                       UUID target,
                       long createdAtMs,
                       long expiresAtMs) {
-        this.teamId = Objects.requireNonNull(teamId);
-        this.teamName = Objects.requireNonNull(teamName);
-        this.inviter = Objects.requireNonNull(inviter);
-        this.target = Objects.requireNonNull(target);
+        this.teamId = Objects.requireNonNull(teamId, "teamId");
+        this.teamName = Objects.requireNonNull(teamName, "teamName");
+        this.inviter = Objects.requireNonNull(inviter, "inviter");
+        this.target = Objects.requireNonNull(target, "target");
         this.createdAtMs = createdAtMs;
         this.expiresAtMs = expiresAtMs;
     }
@@ -52,8 +52,7 @@ public final class TeamInvite {
         return Math.max(0L, rem);
     }
 
-    // --- Compatibility aliases (record-style accessors) ---
-    // Keeps TeamCommand working if it was written against a record TeamInvite.
+    // Record-style compatibility (if any code used inv.teamId(), etc.)
     public UUID teamId() { return getTeamId(); }
     public String teamName() { return getTeamName(); }
     public UUID inviter() { return getInviter(); }

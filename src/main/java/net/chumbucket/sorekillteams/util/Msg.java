@@ -51,15 +51,14 @@ public final class Msg {
         this.cachedPrefixRaw = p;
         this.cachedPrefix = color(p);
 
-        // Optional: messages.yml toggle (defaults true for patch/dev visibility)
-        // Add to messages.yml if you want:
+        // Optional: messages.yml toggle:
         // debug_missing_keys: false
         this.debugMissingKeys = messages != null && messages.getBoolean("debug_missing_keys", true);
     }
 
     public String raw(String key) {
-        if (messages == null || key == null) return "";
-        return messages.getString(key, "");
+        if (messages == null || key == null) return null;
+        return messages.getString(key, null);
     }
 
     public boolean hasKey(String key) {
@@ -77,7 +76,7 @@ public final class Msg {
     public String format(String key) {
         String s = raw(key);
         if (s == null || s.isBlank()) {
-            return debugMissingKeys ? prefix() + key : "";
+            return debugMissingKeys ? (prefix() + key) : "";
         }
 
         // Replace with raw &-prefix, then color once at the end

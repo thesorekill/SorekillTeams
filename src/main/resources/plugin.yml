@@ -46,39 +46,53 @@ permissions:
   sorekillteams.create:
     description: Create a team
     default: true
+
   sorekillteams.invite:
     description: Invite players to your team
     default: true
+
+  sorekillteams.invites:
+    description: View your pending team invites (/team invites)
+    default: true
+
   sorekillteams.accept:
     description: Accept team invites
     default: true
+
   sorekillteams.deny:
     description: Deny team invites
     default: true
+
   sorekillteams.leave:
     description: Leave your team
     default: true
+
   sorekillteams.disband:
     description: Disband your team (owner)
     default: true
+
   sorekillteams.info:
     description: View team info
     default: true
+
   sorekillteams.kick:
     description: Kick a member (owner)
     default: true
+
   sorekillteams.transfer:
     description: Transfer team ownership
     default: true
+
   sorekillteams.rename:
     description: Rename your team
     default: true
+
   sorekillteams.ff:
     description: Toggle friendly fire for your team (owner)
     default: true
 
   # -------------------------
-  # Team chat (A)
+  # Team chat
   # -------------------------
   sorekillteams.teamchat:
     description: Use team chat features (toggle/team chat commands)
@@ -92,14 +106,14 @@ permissions:
       sorekillteams.teamchat: true
 
   # -------------------------
-  # Team spy (A)
+  # Team spy
   # -------------------------
   sorekillteams.spy:
     description: Spy on team chat messages
     default: op
 
   # -------------------------
-  # Friendly fire bypass (C)
+  # Friendly fire bypass
   # -------------------------
   sorekillteams.friendlyfire.bypass:
     description: Bypass friendly fire protection (damage teammates even if blocked)
@@ -114,20 +128,28 @@ permissions:
     default: false
 
   # -------------------------
-  # Admin action nodes (E)
+  # Admin action nodes
   # -------------------------
   sorekillteams.admin.reload:
     description: Reload config/messages
     default: op
+
+  sorekillteams.admin.version:
+    description: View plugin version information
+    default: op
+
   sorekillteams.admin.disband:
     description: Force disband a team
     default: op
+
   sorekillteams.admin.setowner:
     description: Force set owner of a team
     default: op
+
   sorekillteams.admin.kick:
     description: Force kick a player from a team
     default: op
+
   sorekillteams.admin.info:
     description: View team info for any team
     default: op

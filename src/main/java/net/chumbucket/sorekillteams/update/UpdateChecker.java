@@ -21,6 +21,8 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public final class UpdateChecker {
 
@@ -37,10 +39,20 @@ public final class UpdateChecker {
     // store last result so join listener can notify ops
     private final AtomicReference<Result> lastResult = new AtomicReference<>();
 
+    // Version table text contains: "1.1.1 Dec 23, 2025 at 4:05 PM"
+    private static final Pattern TABLE_VERSION = Pattern.compile(
+            "\\b([0-9]+(?:\\.[0-9]+){0,2})\\b\\s+([A-Z][a-z]{2})\\s+\\d{1,2},\\s+\\d{4}",
+            Pattern.CASE_INSENSITIVE
+    );
+
+    // Generic semver-ish token matcher
+    private static final Pattern ANY_VERSION = Pattern.compile("\\b([0-9]+(?:\\.[0-9]+){0,2})\\b");
+
     public UpdateChecker(SorekillTeamsPlugin plugin) {
         this.plugin = plugin;
         this.http = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(5))
+                .followRedirects(HttpClient.Redirect.NORMAL)
                 .build();
     }
 
@@ -51,17 +63,14 @@ public final class UpdateChecker {
     public void checkNowAsync() {
         if (!plugin.getConfig().getBoolean("update_checker.enabled", true)) return;
 
-        final String owner = safeTrim(plugin.getConfig().getString("update_checker.github.owner", ""));
-        final String repo  = safeTrim(plugin.getConfig().getString("update_checker.github.repo", ""));
-
-        if (owner.isEmpty() || repo.isEmpty() || owner.equalsIgnoreCase("YOUR_GITHUB_USERNAME_OR_ORG")) {
-            plugin.getLogger().warning("[UpdateChecker] Skipping update check: update_checker.github.owner/repo not set");
+        final String url = resolveHistoryUrl();
+        if (url.isBlank()) {
+            plugin.getLogger().warning("[UpdateChecker] Skipping update check: update_checker.spigot.history_url/resource_id not set");
             return;
         }
 
-        // async to avoid blocking main thread
         plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
-            Result res = check(owner, repo);
+            Result res = checkSpigot(url);
             lastResult.set(res);
 
             if (!res.success()) {
@@ -88,52 +97,89 @@ public final class UpdateChecker {
         });
     }
 
-    private Result check(String owner, String repo) {
+    private Result checkSpigot(String historyUrl) {
         String current = normalizeVersion(plugin.getDescription().getVersion());
 
         try {
-            // GitHub API: latest release
-            String apiUrl = "https://api.github.com/repos/" + owner + "/" + repo + "/releases/latest";
-
-            HttpRequest.Builder b = HttpRequest.newBuilder()
-                    .uri(URI.create(apiUrl))
+            HttpRequest req = HttpRequest.newBuilder()
+                    .uri(URI.create(historyUrl))
                     .timeout(Duration.ofSeconds(10))
-                    .header("Accept", "application/vnd.github+json")
                     .header("User-Agent", "SorekillTeams/" + current + " (UpdateChecker)")
-                    .GET();
-
-            // Optional token support (safe if absent). If you ever add this config, it "just works".
-            String token = safeTrim(plugin.getConfig().getString("update_checker.github.token", ""));
-            if (!token.isEmpty()) {
-                b.header("Authorization", "Bearer " + token);
-            }
-
-            HttpRequest req = b.build();
+                    .header("Accept", "text/html,application/xhtml+xml")
+                    .GET()
+                    .build();
 
             HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
             int code = resp.statusCode();
             String body = resp.body() == null ? "" : resp.body();
 
-            if (code != 200) {
+            if (code != 200 || body.isBlank()) {
                 String snippet = body.length() > 160 ? body.substring(0, 160) + "..." : body;
-                return new Result(false, false, current, "", "", "HTTP " + code + " (" + snippet + ")");
+                return new Result(false, false, current, "", historyUrl, "HTTP " + code + " (" + snippet + ")");
             }
 
-            // minimal JSON parsing (no dependencies)
-            String tag = extractJsonString(body, "tag_name").orElse("");
-            String url = extractJsonString(body, "html_url").orElse("");
-
-            if (tag.isBlank()) {
-                return new Result(false, false, current, "", "", "Could not read tag_name from GitHub response");
+            String latest = extractLatestVersion(body).orElse("");
+            if (latest.isBlank()) {
+                return new Result(false, false, current, "", historyUrl, "Could not parse latest version from Spigot page");
             }
 
-            String latest = normalizeVersion(tag);
+            latest = normalizeVersion(latest);
             boolean updateAvailable = VersionUtil.isNewer(latest, current);
 
-            return new Result(true, updateAvailable, current, latest, url, "");
+            return new Result(true, updateAvailable, current, latest, historyUrl, "");
         } catch (Exception e) {
-            return new Result(false, false, current, "", "", e.getClass().getSimpleName() + ": " + e.getMessage());
+            return new Result(false, false, current, "", historyUrl, e.getClass().getSimpleName() + ": " + e.getMessage());
         }
+    }
+
+    private Optional<String> extractLatestVersion(String html) {
+        if (html == null || html.isBlank()) return Optional.empty();
+
+        // 1) Try the Version History table — newest is typically listed first
+        Matcher table = TABLE_VERSION.matcher(html);
+        if (table.find()) {
+            String v = table.group(1);
+            if (v != null && !v.isBlank()) return Optional.of(v);
+        }
+
+        // 2) Robust fallback: strip tags, scan all versions, pick newest
+        String text = stripHtmlTags(html);
+
+        Matcher any = ANY_VERSION.matcher(text);
+        String best = "";
+        while (any.find()) {
+            String cand = any.group(1);
+            if (cand == null || cand.isBlank()) continue;
+
+            // normalize before compare (handles "v1.2.0" cases even though regex won't catch 'v')
+            String norm = normalizeVersion(cand);
+            if (best.isBlank() || VersionUtil.isNewer(norm, best)) best = norm;
+        }
+
+        return best.isBlank() ? Optional.empty() : Optional.of(best);
+    }
+
+    private static String stripHtmlTags(String html) {
+        // fast + dependency-free (good enough for parsing)
+        String s = html.replaceAll("(?is)<script.*?>.*?</script>", " ");
+        s = s.replaceAll("(?is)<style.*?>.*?</style>", " ");
+        s = s.replaceAll("(?is)<[^>]+>", " ");
+        return s.replace("&nbsp;", " ").replaceAll("\\s{2,}", " ").trim();
+    }
+
+    private String resolveHistoryUrl() {
+        // Option A (preferred): hard-set the full history URL
+        String direct = safeTrim(plugin.getConfig().getString("update_checker.spigot.history_url", ""));
+        if (!direct.isBlank()) return direct;
+
+        // Option B: build from resource id (+ optional slug)
+        int id = plugin.getConfig().getInt("update_checker.spigot.resource_id", -1);
+        if (id <= 0) return "";
+
+        String slug = safeTrim(plugin.getConfig().getString("update_checker.spigot.slug", "sorekillteams"));
+        if (slug.isBlank()) slug = "sorekillteams";
+
+        return "https://www.spigotmc.org/resources/" + slug + "." + id + "/history";
     }
 
     private static String safeTrim(String s) {
@@ -147,35 +193,12 @@ public final class UpdateChecker {
         return v;
     }
 
-    private static Optional<String> extractJsonString(String json, String key) {
-        // looks for: "key":"value"
-        // handles simple escapes poorly but fine for GitHub tag_name/html_url
-        String needle = "\"" + key + "\"";
-        int i = json.indexOf(needle);
-        if (i < 0) return Optional.empty();
-
-        int colon = json.indexOf(':', i + needle.length());
-        if (colon < 0) return Optional.empty();
-
-        int firstQuote = json.indexOf('"', colon + 1);
-        if (firstQuote < 0) return Optional.empty();
-
-        int secondQuote = json.indexOf('"', firstQuote + 1);
-        while (secondQuote > 0 && json.charAt(secondQuote - 1) == '\\') {
-            secondQuote = json.indexOf('"', secondQuote + 1);
-        }
-        if (secondQuote < 0) return Optional.empty();
-
-        return Optional.of(json.substring(firstQuote + 1, secondQuote));
-    }
-
     /**
      * messages.yml uses & color codes and Msg.format() translates them into § codes.
      * Console doesn't render §, so we strip them for clean logs.
      */
     private static String stripForConsole(String s) {
         if (s == null) return "";
-        // In case anything is still '&', normalize then strip.
         String colored = Msg.color(s);
         return ChatColor.stripColor(colored);
     }

@@ -21,7 +21,7 @@ admin_usage: "{prefix}&7Use: /sorekillteams reload|version"
 # =========================
 # Team - Usage / Help
 # =========================
-team_usage: "{prefix}&7Use: /team create|invite|invites|accept|deny|leave|disband|info|ff|kick|transfer|rename|spy"
+team_usage: "{prefix}&7Use: /team create|invite|invites|accept|deny|leave|disband|info|ff|kick|transfer|rename|spy|chat"
 team_create_usage: "{prefix}&7Usage: /team create <name>"
 team_invite_usage: "{prefix}&7Usage: /team invite <player>"
 team_invites_tip: "{prefix}&7Tip: /team accept <team> or /team deny <team>"
@@ -59,7 +59,11 @@ team_spy_team_not_found: "{prefix}&cTeam not found: &f{team}"
 # Team - Create / Disband
 # =========================
 team_created: "{prefix}&fYou created the team &8&l(&c&l{team}&8&l)&f!"
+
+# Primary key used by your service
 team_team_disbanded: "{prefix}&c{team} was disbanded."
+# Compatibility alias (in case some code expects this key)
+team_disbanded: "{prefix}&c{team} was disbanded."
 
 # Team name validation (used by TeamNameValidator)
 team_name_invalid: "{prefix}&cInvalid team name. Use letters/numbers/_ and only color (&0-&f) + bold (&l)."
