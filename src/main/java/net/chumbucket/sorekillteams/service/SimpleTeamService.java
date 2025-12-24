@@ -208,9 +208,30 @@ public final class SimpleTeamService implements TeamService {
         if (playerToTeam.containsKey(invitee))
             throw new TeamServiceException(TeamError.INVITEE_IN_TEAM, "team_invitee_in_team");
 
-        int cdSeconds = Math.max(0, plugin.getConfig().getInt("invites.cooldown_seconds", 10));
         long now = System.currentTimeMillis();
 
+        // 1.1.3: anti-spam limits
+        int maxPending = Math.max(1, plugin.getConfig().getInt("invites.max_pending_per_player", 5));
+        int pendingNow = invites.pendingForTarget(invitee, now);
+        if (pendingNow >= maxPending) {
+            throw new TeamServiceException(TeamError.INVITE_TARGET_MAX_PENDING, "team_invite_target_max_pending");
+        }
+
+        int maxOutgoing = Math.max(1, plugin.getConfig().getInt("invites.max_outgoing_per_team", 10));
+        int outgoingNow = invites.outgoingForTeam(t.getId(), now);
+        if (outgoingNow >= maxOutgoing) {
+            throw new TeamServiceException(TeamError.INVITE_TEAM_MAX_OUTGOING, "team_invite_team_max_outgoing");
+        }
+
+        boolean allowMultiTeams = plugin.getConfig().getBoolean("invites.allow_multiple_from_different_teams", true);
+        if (!allowMultiTeams) {
+            if (invites.hasInviteFromOtherTeam(invitee, t.getId(), now)) {
+                throw new TeamServiceException(TeamError.INVITE_ONLY_ONE_TEAM, "team_invite_only_one_team");
+            }
+        }
+
+        // cooldown
+        int cdSeconds = Math.max(0, plugin.getConfig().getInt("invites.cooldown_seconds", 10));
         if (cdSeconds > 0) {
             long until = inviteCooldownUntil.getOrDefault(inviter, 0L);
             if (until > now) {
@@ -235,6 +256,14 @@ public final class SimpleTeamService implements TeamService {
                 now,
                 expiresAt
         );
+
+        boolean refreshOnReinvite = plugin.getConfig().getBoolean("invites.reinvite_refreshes_expiry", true);
+        if (refreshOnReinvite) {
+            boolean refreshed = invites.refresh(invitee, t.getId(), inv, now);
+            if (refreshed) {
+                return;
+            }
+        }
 
         boolean created = invites.create(inv, now);
         if (!created) {
@@ -267,7 +296,6 @@ public final class SimpleTeamService implements TeamService {
             inv = active.get(0);
         }
 
-        // Should be redundant because listActive filters, but keep it safe:
         if (inv.isExpired(now)) {
             invites.remove(invitee, inv.getTeamId());
             throw new TeamServiceException(TeamError.INVITE_EXPIRED, "team_invite_expired");
@@ -275,7 +303,6 @@ public final class SimpleTeamService implements TeamService {
 
         Team t = teams.get(inv.getTeamId());
         if (t == null) {
-            // ✅ 1.1.2: Team is gone (disbanded/deleted). Remove the invite so it's not a ghost invite.
             invites.remove(invitee, inv.getTeamId());
             throw new TeamServiceException(TeamError.INVITE_EXPIRED, "team_invite_expired");
         }
@@ -285,7 +312,6 @@ public final class SimpleTeamService implements TeamService {
 
         int max = getTeamMaxMembers(t);
         if (uniqueMemberCount(t) >= max) {
-            // Team is full right now; keep invite so they can try later until it expires.
             throw new TeamServiceException(TeamError.TEAM_FULL, "team_team_full");
         }
 
@@ -314,7 +340,6 @@ public final class SimpleTeamService implements TeamService {
         long now = System.currentTimeMillis();
         List<TeamInvite> active = invites.listActive(invitee, now);
         if (active.isEmpty()) {
-            // ✅ 1.1.2: best-effort cleanup of any stale entries
             invites.clearTarget(invitee);
             return false;
         }
@@ -432,12 +457,11 @@ public final class SimpleTeamService implements TeamService {
 
         safeSave();
 
-        // Send "renamed" broadcast; your messages key expects {team} and {by}
         broadcastToTeam(t, plugin.msg().format(
                 "team_renamed_broadcast",
                 "{team}", Msg.color(t.getName()),
                 "{by}", nameOf(owner),
-                "{old}", Msg.color(old) // harmless extra if your formatter ignores unknowns
+                "{old}", Msg.color(old)
         ));
     }
 
@@ -500,7 +524,6 @@ public final class SimpleTeamService implements TeamService {
 
         broadcastToTeam(team, out);
 
-        // Spy broadcast
         broadcastToSpy(team, sender.getUniqueId(), sender.getName(), Msg.color(msg));
     }
 
@@ -574,7 +597,6 @@ public final class SimpleTeamService implements TeamService {
             UUID spyUuid = p.getUniqueId();
             if (spyUuid == null) continue;
 
-            // don't send spy output to team members
             if (areTeammates(spyUuid, senderUuid)) continue;
 
             Set<UUID> watching = spyTargets.get(spyUuid);

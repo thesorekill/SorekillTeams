@@ -23,7 +23,12 @@ public enum TeamError {
     ALREADY_MEMBER,
     INVITEE_IN_TEAM,
     INVITE_SELF,
+
+    // invites
     INVITE_ALREADY_PENDING,
+    INVITE_TARGET_MAX_PENDING,     // 1.1.3: invites.max_pending_per_player
+    INVITE_TEAM_MAX_OUTGOING,      // 1.1.3: invites.max_outgoing_per_team
+    INVITE_ONLY_ONE_TEAM,          // 1.1.3: invites.allow_multiple_from_different_teams = false
 
     MULTIPLE_INVITES,
     INVITE_EXPIRED,

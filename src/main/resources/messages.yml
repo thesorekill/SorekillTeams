@@ -19,6 +19,8 @@ version: "{prefix}&7SorekillTeams &bv{version}&7 by &fSorekill&7."
 
 unknown_command: "{prefix}&cUnknown subcommand."
 admin_usage: "{prefix}&7Use: /sorekillteams reload|version"
+admin_action_disabled: "{prefix}&cThat admin action is disabled in config."
+
 
 # =========================
 # Team - Usage / Help
@@ -56,6 +58,10 @@ team_player_must_be_online_or_uuid: "{prefix}&cThat player must be online, or pr
 # Spy errors/status (1.0.8)
 team_spy_disabled: "{prefix}&cTeam spy is disabled."
 team_spy_team_not_found: "{prefix}&cTeam not found: &f{team}"
+
+team_invite_target_max_pending: "{prefix}&cThat player has too many pending invites."
+team_invite_team_max_outgoing: "{prefix}&cYour team has too many outgoing invites."
+team_invite_only_one_team: "{prefix}&cThat player already has a pending invite from another team."
 
 # =========================
 # Team - Create / Disband
