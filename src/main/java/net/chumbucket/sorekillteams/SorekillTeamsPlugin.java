@@ -17,9 +17,13 @@ import net.chumbucket.sorekillteams.command.TeamCommandTabCompleter;
 import net.chumbucket.sorekillteams.listener.FriendlyFireListener;
 import net.chumbucket.sorekillteams.listener.TeamChatListener;
 import net.chumbucket.sorekillteams.model.TeamInvites;
+import net.chumbucket.sorekillteams.service.SimpleTeamHomeService;
 import net.chumbucket.sorekillteams.service.SimpleTeamService;
+import net.chumbucket.sorekillteams.service.TeamHomeService;
 import net.chumbucket.sorekillteams.service.TeamService;
+import net.chumbucket.sorekillteams.storage.TeamHomeStorage;
 import net.chumbucket.sorekillteams.storage.TeamStorage;
+import net.chumbucket.sorekillteams.storage.YamlTeamHomeStorage;
 import net.chumbucket.sorekillteams.storage.YamlTeamStorage;
 import net.chumbucket.sorekillteams.update.UpdateChecker;
 import net.chumbucket.sorekillteams.update.UpdateNotifyListener;
@@ -36,10 +40,15 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
     private Msg msg;
     private Debug debug;
+
     private TeamStorage storage;
     private TeamService teams;
 
-    // 1.0.3: invite store (in-memory). Used by services/commands.
+    // Team homes
+    private TeamHomeStorage teamHomeStorage;
+    private TeamHomeService teamHomes;
+
+    // Invite store (in-memory)
     private final TeamInvites invites = new TeamInvites();
 
     private UpdateChecker updateChecker;
@@ -48,22 +57,24 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     private int invitePurgeTaskId = -1;
     private int autosaveTaskId = -1;
 
-    // ✅ Prevent overlapping saves (autosave + command-triggered saves + disable)
+    // Prevent overlapping saves
     private final AtomicBoolean saveInFlight = new AtomicBoolean(false);
 
     @Override
     public void onEnable() {
-        // Config + message file
         saveDefaultConfig();
         saveResourceIfMissing(getMessagesFileNameSafe());
 
-        // Core services
         this.msg = new Msg(this);
         this.debug = new Debug(this);
+
         this.storage = new YamlTeamStorage(this);
         this.teams = new SimpleTeamService(this, storage);
 
-        // Load data (fail-safe)
+        // Homes (team)
+        syncHomesWiringFromConfig(true);
+
+        // Load teams (fail-safe)
         try {
             storage.loadAll(teams);
         } catch (Exception e) {
@@ -72,6 +83,9 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             getServer().getPluginManager().disablePlugin(this);
             return;
         }
+
+        // Load homes (best-effort)
+        loadHomesBestEffort("startup");
 
         // Commands
         registerCommand("sorekillteams", new AdminCommand(this));
@@ -85,11 +99,9 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         getServer().getPluginManager().registerEvents(new FriendlyFireListener(this), this);
         getServer().getPluginManager().registerEvents(new TeamChatListener(this), this);
 
-        // Housekeeping tasks
         startInvitePurgeTask();
         startAutosaveTask();
 
-        // Update checker (config togglable)
         syncUpdateCheckerWithConfig();
 
         getLogger().info("SorekillTeams enabled.");
@@ -97,23 +109,17 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
     @Override
     public void onDisable() {
-        // Stop tasks first (so we don't race with shutdown save)
         stopTask(invitePurgeTaskId);
         invitePurgeTaskId = -1;
 
         stopTask(autosaveTaskId);
         autosaveTaskId = -1;
 
-        // Final save (best-effort). If an async save is mid-flight, we skip to avoid corruption.
         trySaveNowSync("shutdown");
 
         getLogger().info("SorekillTeams disabled.");
     }
 
-    /**
-     * Reloads config + messages + storage-backed data.
-     * Patch-safe behavior: rehydrate the TeamService from disk.
-     */
     public void reloadEverything() {
         reloadConfig();
         saveResourceIfMissing(getMessagesFileNameSafe());
@@ -126,30 +132,78 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             }
         }
 
-        // Reload teams from storage (avoid stale in-memory state)
+        // Reload teams (best-effort; keep old if reload fails)
         try {
             if (storage == null) storage = new YamlTeamStorage(this);
 
-            // Load into a fresh service, then swap only if successful
             TeamService fresh = new SimpleTeamService(this, storage);
             storage.loadAll(fresh);
             this.teams = fresh;
 
-            // Clean expired invites immediately after reload
             invites.purgeExpiredAll(System.currentTimeMillis());
         } catch (Exception e) {
             getLogger().severe("Reload failed while loading teams. Keeping previous in-memory teams.");
             getLogger().severe("Reason: " + e.getClass().getSimpleName() + ": " + e.getMessage());
         }
 
-        // Restart configurable tasks (in case user changed values)
+        // Reload homes enabled/disabled + load file
+        syncHomesWiringFromConfig(false);
+        loadHomesBestEffort("reload");
+
         startInvitePurgeTask();
         startAutosaveTask();
 
-        // Apply updates toggle on reload too
         syncUpdateCheckerWithConfig();
 
         getLogger().info("SorekillTeams reloaded.");
+    }
+
+    /**
+     * Create/clear home services based on config.
+     * @param isStartup if true, we wire without worrying about old state
+     */
+    private void syncHomesWiringFromConfig(boolean isStartup) {
+        boolean homesEnabled = getConfig().getBoolean("homes.enabled", false);
+
+        if (!homesEnabled) {
+            teamHomeStorage = null;
+            teamHomes = null;
+            return;
+        }
+
+        // storage
+        if (teamHomeStorage == null) {
+            teamHomeStorage = new YamlTeamHomeStorage(this);
+        }
+
+        // service
+        if (teamHomes == null || !isStartup) {
+            // If you want reload to hard-reset in-memory state, rebuild it:
+            teamHomes = buildTeamHomeService();
+        }
+    }
+
+    /**
+     * Central place to construct the home service.
+     * If your SimpleTeamHomeService has a different constructor, change it here.
+     */
+    private TeamHomeService buildTeamHomeService() {
+        // Common variants you might have:
+        // return new SimpleTeamHomeService(this);
+        // return new SimpleTeamHomeService(this, teamHomeStorage);
+
+        return new SimpleTeamHomeService();
+    }
+
+    private void loadHomesBestEffort(String phase) {
+        if (teamHomeStorage == null || teamHomes == null) return;
+
+        try {
+            teamHomeStorage.loadAll(teamHomes);
+        } catch (Exception e) {
+            getLogger().warning("Failed to load team_homes.yml (" + phase + "): " +
+                    e.getClass().getSimpleName() + ": " + e.getMessage());
+        }
     }
 
     private void registerCommand(String name, CommandExecutor executor) {
@@ -188,9 +242,6 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         }
     }
 
-    /**
-     * Safe wrapper that never returns blank, and tolerates config weirdness.
-     */
     private String getMessagesFileNameSafe() {
         String v = null;
         try {
@@ -242,6 +293,12 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             if (s != null && t != null) {
                 s.saveAll(t);
             }
+
+            TeamHomeStorage hs = this.teamHomeStorage;
+            TeamHomeService hv = this.teamHomes;
+            if (hs != null && hv != null) {
+                hs.saveAll(hv);
+            }
         } catch (Exception e) {
             getLogger().severe("Save failed (" + reason + "): " + e.getClass().getSimpleName() + ": " + e.getMessage());
         } finally {
@@ -258,6 +315,12 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             if (s != null && t != null) {
                 s.saveAll(t);
             }
+
+            TeamHomeStorage hs = this.teamHomeStorage;
+            TeamHomeService hv = this.teamHomes;
+            if (hs != null && hv != null) {
+                hs.saveAll(hv);
+            }
         } catch (Exception e) {
             getLogger().severe("Save failed (" + reason + "): " + e.getClass().getSimpleName() + ": " + e.getMessage());
         } finally {
@@ -272,9 +335,6 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         } catch (Exception ignored) {}
     }
 
-    /**
-     * Keeps update checker state consistent with config.
-     */
     private void syncUpdateCheckerWithConfig() {
         boolean enabled = getConfig().getBoolean("update_checker.enabled", true);
 
@@ -282,7 +342,6 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             this.updateChecker = new UpdateChecker(this);
         }
 
-        // Ensure listener exists + registered once
         if (this.updateNotifyListener == null) {
             this.updateNotifyListener = new UpdateNotifyListener(this, updateChecker);
             getServer().getPluginManager().registerEvents(updateNotifyListener, this);
@@ -295,10 +354,7 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         }
     }
 
-    // Keep existing API
-    public String getMessagesFileName() {
-        return getMessagesFileNameSafe();
-    }
+    public String getMessagesFileName() { return getMessagesFileNameSafe(); }
 
     public Msg msg() { return msg; }
     public Debug debug() { return debug; }
@@ -307,6 +363,9 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     public TeamStorage storage() { return storage; }
     public UpdateChecker updateChecker() { return updateChecker; }
 
-    // 1.0.3
     public TeamInvites invites() { return invites; }
+
+    // Team homes
+    public TeamHomeService teamHomes() { return teamHomes; }
+    public TeamHomeStorage teamHomeStorage() { return teamHomeStorage; }
 }

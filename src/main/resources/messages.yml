@@ -21,11 +21,10 @@ unknown_command: "{prefix}&cUnknown subcommand."
 admin_usage: "{prefix}&7Use: /sorekillteams reload|version"
 admin_action_disabled: "{prefix}&cThat admin action is disabled in config."
 
-
 # =========================
 # Team - Usage / Help
 # =========================
-team_usage: "{prefix}&7Use: /team create|invite|invites|accept|deny|leave|disband|info|ff|kick|transfer|rename|spy|chat"
+team_usage: "{prefix}&7Use: /team create|invite|invites|accept|deny|leave|disband|info|ff|kick|transfer|rename|spy|chat|homes|home|sethome|delhome"
 team_create_usage: "{prefix}&7Usage: /team create <name>"
 team_invite_usage: "{prefix}&7Usage: /team invite <player>"
 team_invites_tip: "{prefix}&7Tip: /team accept <team> or /team deny <team>"
@@ -36,6 +35,9 @@ team_rename_usage: "{prefix}&7Usage: /team rename <name>"
 
 # Team Spy (1.0.8)
 team_spy_usage: "{prefix}&7Usage: /team spy <team> | /team spy list | /team spy off"
+
+# Team Chat (usage helper)
+teamchat_usage: "{prefix}&7Usage: /team chat <on|off|toggle|status>  &8(or /tc <message>)"
 
 # =========================
 # Team - Common Errors
@@ -85,7 +87,7 @@ team_name_taken: "{prefix}&cThat team name is already taken."
 # Team - Rename (1.0.7)
 # =========================
 team_renamed: "{prefix}&aRenamed team from &c{old}&a to &c{team}&a."
-team_renamed_broadcast: "{prefix}&eTeam renamed to &c{team}&e by &f{by}&e."
+team_renamed_broadcast: "{prefix}&eTeam renamed from &c{old}&e to &c{team}&e by &f{by}&e."
 
 # =========================
 # Team - Membership
@@ -154,6 +156,33 @@ team_spy_list: "{prefix}&7Spying on: &c{teams}"
 team_spy_cleared: "{prefix}&aSpy cleared."
 team_spy_on: "{prefix}&aNow spying on &c{team}&a."
 team_spy_off: "{prefix}&cStopped spying on &c{team}&c."
+
+# =========================
+# Team Homes
+# =========================
+homes_disabled: "{prefix}&cHomes are disabled."
+
+team_home_owner_only: "{prefix}&cOnly the team owner can manage team homes."
+
+team_sethome_usage: "{prefix}&7Usage: /team sethome <name>"
+team_delhome_usage: "{prefix}&7Usage: /team delhome <name>"
+team_home_usage: "{prefix}&7Usage: /team home <name>"
+
+team_home_set: "{prefix}&aTeam home set: &f{home}&a."
+team_home_deleted: "{prefix}&cTeam home deleted: &f{home}&c."
+team_home_not_found: "{prefix}&cTeam home not found: &f{home}&c."
+
+team_homes_none: "{prefix}&7Your team has no homes set."
+team_homes_header: "{prefix}&8&m-----&r &c{team} Homes &8&m-----"
+team_homes_entry: "{prefix}&f- &c{home} &8(&7{world}&8)"
+
+team_home_max_reached: "{prefix}&cYour team has reached the max homes limit (&f{max}&c)."
+
+team_home_cooldown: "{prefix}&cYour team must wait &f{seconds}&c seconds before teleporting again."
+team_home_warmup: "{prefix}&7Teleporting in &f{seconds}&7 seconds..."
+team_home_teleported: "{prefix}&aTeleported to team home: &f{home}&a."
+team_home_world_missing: "{prefix}&cThat home’s world is missing/unloaded: &f{home}&c."
+team_home_wrong_server: "{prefix}&cThat home (&f{home}&c) is on server &f{server}&c."
 
 # =========================
 # Friendly Fire (Combat)

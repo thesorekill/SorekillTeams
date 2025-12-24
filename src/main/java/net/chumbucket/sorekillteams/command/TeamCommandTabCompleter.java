@@ -12,6 +12,7 @@ package net.chumbucket.sorekillteams.command;
 
 import net.chumbucket.sorekillteams.SorekillTeamsPlugin;
 import net.chumbucket.sorekillteams.model.Team;
+import net.chumbucket.sorekillteams.model.TeamHome;
 import net.chumbucket.sorekillteams.model.TeamInvite;
 import org.bukkit.Bukkit;
 import org.bukkit.command.Command;
@@ -35,12 +36,17 @@ public final class TeamCommandTabCompleter implements TabCompleter {
         if (!(sender instanceof Player p)) return List.of();
         if (!p.hasPermission("sorekillteams.use")) return List.of();
 
+        if (args.length == 0) return List.of();
+
         if (args.length == 1) {
             return partial(args[0], subcommandsFor(p));
         }
 
-        String sub = args[0] == null ? "" : args[0].toLowerCase(Locale.ROOT);
+        String sub = safeLower(args[0]);
 
+        // -------------------------
+        // team chat toggle
+        // -------------------------
         if (sub.equals("chat") || sub.equals("tc") || sub.equals("teamchat")) {
             if (!isTeamChatEnabledInConfig()) return List.of();
             if (!p.hasPermission("sorekillteams.teamchat")) return List.of();
@@ -51,11 +57,17 @@ public final class TeamCommandTabCompleter implements TabCompleter {
             return List.of();
         }
 
+        // -------------------------
+        // friendly fire
+        // -------------------------
         if (args.length == 2 && (sub.equals("ff") || sub.equals("friendlyfire"))) {
             if (!p.hasPermission("sorekillteams.ff")) return List.of();
             return partial(args[1], List.of("on", "off", "toggle", "status"));
         }
 
+        // -------------------------
+        // invite/kick/transfer (player names)
+        // -------------------------
         if (args.length == 2 && sub.equals("invite")) {
             if (!p.hasPermission("sorekillteams.invite")) return List.of();
             return partial(args[1], onlinePlayerNamesExcluding(p.getName()));
@@ -71,23 +83,68 @@ public final class TeamCommandTabCompleter implements TabCompleter {
             return partial(args[1], onlinePlayerNamesExcluding(p.getName()));
         }
 
+        // -------------------------
+        // accept/deny (invite team names)
+        // -------------------------
         if (sub.equals("accept") || sub.equals("deny")) {
             if (sub.equals("accept") && !p.hasPermission("sorekillteams.accept")) return List.of();
             if (sub.equals("deny") && !p.hasPermission("sorekillteams.deny")) return List.of();
 
-            String joined = String.join(" ", Arrays.copyOfRange(args, 1, args.length)).trim();
+            // allow multi-word team names
+            String joined = joinFrom(args, 1);
             return partial(joined, inviteTeamNames(p.getUniqueId()));
         }
 
+        // -------------------------
+        // spy
+        // -------------------------
         if (sub.equals("spy")) {
             if (!p.hasPermission("sorekillteams.spy")) return List.of();
 
-            String joined = String.join(" ", Arrays.copyOfRange(args, 1, args.length)).trim();
+            // allow multi-word team names
+            String joined = joinFrom(args, 1);
 
             List<String> options = new ArrayList<>(List.of("list", "off", "clear"));
             options.addAll(allTeamNames(p));
 
             return partial(joined, options);
+        }
+
+        // -------------------------
+        // homes (team homes)
+        // -------------------------
+        if (isHomesEnabledInConfig() && plugin.teamHomes() != null) {
+
+            // /team homes
+            if (sub.equals("homes")) {
+                if (!p.hasPermission("sorekillteams.homes")) return List.of();
+                return List.of(); // no args
+            }
+
+            // /team home <name...>
+            if (sub.equals("home")) {
+                if (!p.hasPermission("sorekillteams.home")) return List.of();
+
+                String joined = joinFrom(args, 1); // multi-word home name support
+                return partial(joined, teamHomeKeysForPlayerTeam(p.getUniqueId()));
+            }
+
+            // /team sethome <name...>
+            if (sub.equals("sethome")) {
+                if (!p.hasPermission("sorekillteams.sethome")) return List.of();
+
+                // suggest existing keys so they can overwrite intentionally
+                String joined = joinFrom(args, 1);
+                return partial(joined, teamHomeKeysForPlayerTeam(p.getUniqueId()));
+            }
+
+            // /team delhome <name...>
+            if (sub.equals("delhome")) {
+                if (!p.hasPermission("sorekillteams.delhome")) return List.of();
+
+                String joined = joinFrom(args, 1);
+                return partial(joined, teamHomeKeysForPlayerTeam(p.getUniqueId()));
+            }
         }
 
         return List.of();
@@ -99,7 +156,6 @@ public final class TeamCommandTabCompleter implements TabCompleter {
         if (p.hasPermission("sorekillteams.create")) subs.add("create");
         if (p.hasPermission("sorekillteams.invite")) subs.add("invite");
 
-        // ✅ 1.1.3: invites is its own permission now
         if (p.hasPermission("sorekillteams.invites")) subs.add("invites");
 
         if (p.hasPermission("sorekillteams.accept")) subs.add("accept");
@@ -117,6 +173,13 @@ public final class TeamCommandTabCompleter implements TabCompleter {
             subs.add("chat");
         }
 
+        if (isHomesEnabledInConfig() && plugin.teamHomes() != null) {
+            if (p.hasPermission("sorekillteams.homes")) subs.add("homes");
+            if (p.hasPermission("sorekillteams.home")) subs.add("home");
+            if (p.hasPermission("sorekillteams.sethome")) subs.add("sethome");
+            if (p.hasPermission("sorekillteams.delhome")) subs.add("delhome");
+        }
+
         return subs.stream().distinct().sorted(String.CASE_INSENSITIVE_ORDER).toList();
     }
 
@@ -125,6 +188,14 @@ public final class TeamCommandTabCompleter implements TabCompleter {
             if (!plugin.getConfig().getBoolean("chat.enabled", true)) return false;
             if (!plugin.getConfig().getBoolean("chat.toggle_enabled", true)) return false;
             return true;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private boolean isHomesEnabledInConfig() {
+        try {
+            return plugin.getConfig().getBoolean("homes.enabled", false);
         } catch (Exception ignored) {
             return false;
         }
@@ -194,8 +265,33 @@ public final class TeamCommandTabCompleter implements TabCompleter {
         }
     }
 
+    private List<String> teamHomeKeysForPlayerTeam(UUID player) {
+        if (player == null) return List.of();
+        if (plugin.teamHomes() == null) return List.of();
+
+        Team team = plugin.teams().getTeamByPlayer(player).orElse(null);
+        if (team == null) return List.of();
+
+        try {
+            List<TeamHome> homes = plugin.teamHomes().listHomes(team.getId());
+            if (homes == null || homes.isEmpty()) return List.of();
+
+            // Suggest the *key* users must type (/team home <key>)
+            return homes.stream()
+                    .filter(Objects::nonNull)
+                    .map(TeamHome::getName) // normalized key stored in TeamHome
+                    .filter(n -> n != null && !n.isBlank())
+                    .distinct()
+                    .sorted(String.CASE_INSENSITIVE_ORDER)
+                    .toList();
+        } catch (Exception ignored) {
+            return List.of();
+        }
+    }
+
     private List<String> partial(String token, Collection<String> options) {
         if (options == null || options.isEmpty()) return List.of();
+
         String t = token == null ? "" : token.toLowerCase(Locale.ROOT);
 
         return options.stream()
@@ -203,5 +299,15 @@ public final class TeamCommandTabCompleter implements TabCompleter {
                 .filter(s -> t.isEmpty() || s.toLowerCase(Locale.ROOT).startsWith(t))
                 .sorted(String.CASE_INSENSITIVE_ORDER)
                 .toList();
+    }
+
+    private static String safeLower(String s) {
+        return s == null ? "" : s.toLowerCase(Locale.ROOT);
+    }
+
+    private static String joinFrom(String[] args, int startIndex) {
+        if (args == null || args.length <= startIndex) return "";
+        String joined = String.join(" ", Arrays.copyOfRange(args, startIndex, args.length)).trim();
+        return joined;
     }
 }

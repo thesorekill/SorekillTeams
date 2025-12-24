@@ -12,13 +12,16 @@ package net.chumbucket.sorekillteams.command;
 
 import net.chumbucket.sorekillteams.SorekillTeamsPlugin;
 import net.chumbucket.sorekillteams.model.Team;
+import net.chumbucket.sorekillteams.model.TeamHome;
 import net.chumbucket.sorekillteams.model.TeamInvite;
+import net.chumbucket.sorekillteams.service.TeamHomeService;
 import net.chumbucket.sorekillteams.service.TeamServiceException;
 import net.chumbucket.sorekillteams.util.CommandErrors;
 import net.chumbucket.sorekillteams.util.Msg;
 import net.chumbucket.sorekillteams.util.TeamNameValidator;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
+import org.bukkit.Location;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
@@ -63,9 +66,7 @@ public final class TeamCommand implements CommandExecutor {
             return true;
         }
 
-        // ✅ 1.1.2: debug flag via Debug helper (config: debug: true/false)
         final boolean debug = plugin.debug() != null && plugin.debug().enabled();
-
         final String sub = args[0].toLowerCase(Locale.ROOT);
 
         try {
@@ -81,7 +82,7 @@ public final class TeamCommand implements CommandExecutor {
                     }
 
                     plugin.reloadEverything();
-                    plugin.msg().send(p, "plugin_reloaded"); // add to messages.yml (or swap to Msg.ok below if you prefer)
+                    plugin.msg().send(p, "plugin_reloaded");
 
                     if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " ran /team reload");
                     return true;
@@ -104,7 +105,6 @@ public final class TeamCommand implements CommandExecutor {
                         return true;
                     }
 
-                    // /team chat  -> toggle
                     if (args.length < 2) {
                         boolean newState = plugin.teams().toggleTeamChat(p.getUniqueId());
                         plugin.msg().send(p, newState ? "teamchat_on" : "teamchat_off");
@@ -139,7 +139,6 @@ public final class TeamCommand implements CommandExecutor {
                             return true;
                         }
                         default -> {
-                            // Keep it simple: show usage line already present in messages.yml
                             plugin.msg().send(p, "teamchat_toggle_disabled");
                             return true;
                         }
@@ -167,7 +166,6 @@ public final class TeamCommand implements CommandExecutor {
 
                     String arg1 = args[1] == null ? "" : args[1].trim();
 
-                    // /team spy list
                     if (arg1.equalsIgnoreCase("list")) {
                         Collection<Team> spied = plugin.teams().getSpiedTeams(p.getUniqueId());
                         if (spied == null || spied.isEmpty()) {
@@ -188,16 +186,13 @@ public final class TeamCommand implements CommandExecutor {
                         return true;
                     }
 
-                    // /team spy off | clear
                     if (arg1.equalsIgnoreCase("off") || arg1.equalsIgnoreCase("clear")) {
                         plugin.teams().clearSpy(p.getUniqueId());
                         plugin.msg().send(p, "team_spy_cleared");
                         return true;
                     }
 
-                    // /team spy <team name...>
-                    // ✅ join args AFTER index (args[0] == "spy") => start from args[1]
-                    String teamNameRaw = joinArgsAfter(args, 0); // args[1..]
+                    String teamNameRaw = joinArgsAfter(args, 0);
                     if (teamNameRaw.isBlank()) {
                         plugin.msg().send(p, "team_spy_usage");
                         return true;
@@ -225,6 +220,262 @@ public final class TeamCommand implements CommandExecutor {
                     if (debug) {
                         plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " spy toggled team=" + team.getName() + " -> " + (enabled ? "ON" : "OFF"));
                     }
+                    return true;
+                }
+
+                // =========================
+                // Team homes (team-owned)
+                // =========================
+                case "sethome" -> {
+                    if (!p.hasPermission("sorekillteams.sethome")) {
+                        plugin.msg().send(p, "no_permission");
+                        return true;
+                    }
+                    if (!plugin.getConfig().getBoolean("homes.enabled", false) || plugin.teamHomes() == null) {
+                        plugin.msg().send(p, "homes_disabled");
+                        return true;
+                    }
+
+                    Team team = plugin.teams().getTeamByPlayer(p.getUniqueId()).orElse(null);
+                    if (team == null) {
+                        plugin.msg().send(p, "team_not_in_team");
+                        return true;
+                    }
+                    if (!p.getUniqueId().equals(team.getOwner())) {
+                        plugin.msg().send(p, "team_home_owner_only");
+                        return true;
+                    }
+
+                    if (args.length < 2) {
+                        plugin.msg().send(p, "team_sethome_usage");
+                        return true;
+                    }
+
+                    String raw = String.join(" ", Arrays.copyOfRange(args, 1, args.length)).trim();
+                    String key = normalizeHomeName(raw);
+                    if (key.isBlank()) {
+                        plugin.msg().send(p, "team_sethome_usage");
+                        return true;
+                    }
+
+                    int maxHomes = Math.max(1, plugin.getConfig().getInt("homes.max_homes", 1));
+
+                    Location loc = p.getLocation();
+                    String serverName = plugin.getConfig().getString("homes.server_name", "default");
+
+                    TeamHome home = new TeamHome(
+                            team.getId(),
+                            key,
+                            raw,
+                            (loc.getWorld() != null ? loc.getWorld().getName() : ""),
+                            loc.getX(), loc.getY(), loc.getZ(),
+                            loc.getYaw(), loc.getPitch(),
+                            System.currentTimeMillis(),
+                            p.getUniqueId(),
+                            serverName
+                    );
+
+                    boolean ok = plugin.teamHomes().setHome(home, maxHomes);
+                    if (!ok) {
+                        plugin.msg().send(p, "team_home_max_reached", "{max}", String.valueOf(maxHomes));
+                        return true;
+                    }
+
+                    try {
+                        if (plugin.teamHomeStorage() != null && plugin.teamHomes() != null) {
+                            plugin.teamHomeStorage().saveAll(plugin.teamHomes());
+                        }
+                    } catch (Exception ignored) {}
+
+                    plugin.msg().send(p, "team_home_set", "{home}", raw);
+
+                    if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " set team home=" + raw + " team=" + team.getName());
+                    return true;
+                }
+
+                case "delhome" -> {
+                    if (!p.hasPermission("sorekillteams.delhome")) {
+                        plugin.msg().send(p, "no_permission");
+                        return true;
+                    }
+                    if (!plugin.getConfig().getBoolean("homes.enabled", false) || plugin.teamHomes() == null) {
+                        plugin.msg().send(p, "homes_disabled");
+                        return true;
+                    }
+
+                    Team team = plugin.teams().getTeamByPlayer(p.getUniqueId()).orElse(null);
+                    if (team == null) {
+                        plugin.msg().send(p, "team_not_in_team");
+                        return true;
+                    }
+                    if (!p.getUniqueId().equals(team.getOwner())) {
+                        plugin.msg().send(p, "team_home_owner_only");
+                        return true;
+                    }
+
+                    if (args.length < 2) {
+                        plugin.msg().send(p, "team_delhome_usage");
+                        return true;
+                    }
+
+                    String raw = String.join(" ", Arrays.copyOfRange(args, 1, args.length)).trim();
+                    String key = normalizeHomeName(raw);
+                    if (key.isBlank()) {
+                        plugin.msg().send(p, "team_delhome_usage");
+                        return true;
+                    }
+
+                    boolean ok = plugin.teamHomes().deleteHome(team.getId(), key);
+                    if (!ok) {
+                        plugin.msg().send(p, "team_home_not_found", "{home}", raw);
+                        return true;
+                    }
+
+                    try {
+                        if (plugin.teamHomeStorage() != null && plugin.teamHomes() != null) {
+                            plugin.teamHomeStorage().saveAll(plugin.teamHomes());
+                        }
+                    } catch (Exception ignored) {}
+
+                    plugin.msg().send(p, "team_home_deleted", "{home}", raw);
+
+                    if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " deleted team home=" + raw + " team=" + team.getName());
+                    return true;
+                }
+
+                case "homes" -> {
+                    if (!p.hasPermission("sorekillteams.homes")) {
+                        plugin.msg().send(p, "no_permission");
+                        return true;
+                    }
+                    if (!plugin.getConfig().getBoolean("homes.enabled", false) || plugin.teamHomes() == null) {
+                        plugin.msg().send(p, "homes_disabled");
+                        return true;
+                    }
+
+                    Team team = plugin.teams().getTeamByPlayer(p.getUniqueId()).orElse(null);
+                    if (team == null) {
+                        plugin.msg().send(p, "team_not_in_team");
+                        return true;
+                    }
+
+                    List<TeamHome> list = plugin.teamHomes().listHomes(team.getId());
+                    if (list.isEmpty()) {
+                        plugin.msg().send(p, "team_homes_none");
+                        return true;
+                    }
+
+                    plugin.msg().send(p, "team_homes_header",
+                            "{team}", Msg.color(team.getName())
+                    );
+
+                    for (TeamHome h : list) {
+                        plugin.msg().send(p, "team_homes_entry",
+                                "{home}", (h.getDisplayName() == null || h.getDisplayName().isBlank()) ? h.getName() : h.getDisplayName(),
+                                "{world}", (h.getWorld() == null || h.getWorld().isBlank()) ? "world" : h.getWorld()
+                        );
+                    }
+
+                    return true;
+                }
+
+                case "home" -> {
+                    if (!p.hasPermission("sorekillteams.home")) {
+                        plugin.msg().send(p, "no_permission");
+                        return true;
+                    }
+                    if (!plugin.getConfig().getBoolean("homes.enabled", false) || plugin.teamHomes() == null) {
+                        plugin.msg().send(p, "homes_disabled");
+                        return true;
+                    }
+
+                    Team team = plugin.teams().getTeamByPlayer(p.getUniqueId()).orElse(null);
+                    if (team == null) {
+                        plugin.msg().send(p, "team_not_in_team");
+                        return true;
+                    }
+
+                    if (args.length < 2) {
+                        plugin.msg().send(p, "team_home_usage");
+                        return true;
+                    }
+
+                    String raw = String.join(" ", Arrays.copyOfRange(args, 1, args.length)).trim();
+                    String key = normalizeHomeName(raw);
+                    if (key.isBlank()) {
+                        plugin.msg().send(p, "team_home_usage");
+                        return true;
+                    }
+
+                    TeamHomeService hs = plugin.teamHomes();
+                    TeamHome h = hs.getHome(team.getId(), key).orElse(null);
+                    if (h == null) {
+                        plugin.msg().send(p, "team_home_not_found", "{home}", raw);
+                        return true;
+                    }
+
+                    boolean proxyMode = plugin.getConfig().getBoolean("homes.proxy_mode", false);
+                    boolean restrict = plugin.getConfig().getBoolean("homes.restrict_to_same_server", true);
+                    if (proxyMode && restrict) {
+                        String currentServer = plugin.getConfig().getString("homes.server_name", "default");
+                        if (currentServer != null && !currentServer.equalsIgnoreCase(h.getServerName())) {
+                            plugin.msg().send(p, "team_home_wrong_server",
+                                    "{home}", h.getDisplayName(),
+                                    "{server}", h.getServerName()
+                            );
+                            return true;
+                        }
+                    }
+
+                    int cooldownSeconds = Math.max(0, plugin.getConfig().getInt("homes.cooldown_seconds", 0));
+                    long now = System.currentTimeMillis();
+                    if (cooldownSeconds > 0) {
+                        long last = hs.getLastTeleportMs(team.getId());
+                        long waitMs = cooldownSeconds * 1000L;
+                        if (now - last < waitMs) {
+                            long remain = (waitMs - (now - last) + 999) / 1000;
+                            plugin.msg().send(p, "team_home_cooldown", "{seconds}", String.valueOf(remain));
+                            return true;
+                        }
+                    }
+
+                    int warmupSeconds = Math.max(0, plugin.getConfig().getInt("homes.warmup_seconds", 0));
+                    if (warmupSeconds > 0) {
+                        plugin.msg().send(p, "team_home_warmup", "{seconds}", String.valueOf(warmupSeconds));
+
+                        final UUID teamId = team.getId();
+                        plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
+                            if (!p.isOnline()) return;
+
+                            Team currentTeam = plugin.teams().getTeamByPlayer(p.getUniqueId()).orElse(null);
+                            if (currentTeam == null || !teamId.equals(currentTeam.getId())) return;
+
+                            TeamHome hh = hs.getHome(teamId, key).orElse(null);
+                            if (hh == null) return;
+
+                            Location dest = hh.toLocationOrNull();
+                            if (dest == null) {
+                                plugin.msg().send(p, "team_home_world_missing", "{home}", hh.getDisplayName());
+                                return;
+                            }
+
+                            p.teleport(dest);
+                            hs.setLastTeleportMs(teamId, System.currentTimeMillis());
+                            plugin.msg().send(p, "team_home_teleported", "{home}", hh.getDisplayName());
+                        }, warmupSeconds * 20L);
+
+                        return true;
+                    }
+
+                    Location dest = h.toLocationOrNull();
+                    if (dest == null) {
+                        plugin.msg().send(p, "team_home_world_missing", "{home}", h.getDisplayName());
+                        return true;
+                    }
+
+                    p.teleport(dest);
+                    hs.setLastTeleportMs(team.getId(), now);
+                    plugin.msg().send(p, "team_home_teleported", "{home}", h.getDisplayName());
                     return true;
                 }
 
@@ -628,7 +879,6 @@ public final class TeamCommand implements CommandExecutor {
                     );
 
                     plugin.msg().send(p, "team_info_legend");
-
                     plugin.msg().send(p, "team_info_created", "{date}", created);
                     plugin.msg().send(p, "team_info_tc", "{state}", Msg.color(tcState));
                     plugin.msg().send(p, "team_info_ff", "{state}", Msg.color(ffState));
@@ -738,6 +988,11 @@ public final class TeamCommand implements CommandExecutor {
         String colored = Msg.color(s);
         String stripped = ChatColor.stripColor(colored);
         return stripped == null ? "" : stripped.trim().toLowerCase(Locale.ROOT).replaceAll("\\s{2,}", " ");
+    }
+
+    private String normalizeHomeName(String s) {
+        if (s == null) return "";
+        return s.trim().toLowerCase(Locale.ROOT).replaceAll("\\s{2,}", " ");
     }
 
     private String nameOf(UUID uuid) {
