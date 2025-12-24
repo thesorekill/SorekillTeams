@@ -181,3 +181,7 @@ permissions:
   sorekillteams.delhome:
     description: Delete a team home (owner only)
     default: true
+
+  sorekillteams.home.bypasscooldown:
+    description: Bypass team home teleport cooldowns
+    default: op

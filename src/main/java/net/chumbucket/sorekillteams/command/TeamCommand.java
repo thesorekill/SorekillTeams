@@ -28,6 +28,10 @@ import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 
+import net.md_5.bungee.api.ChatMessageType;
+import net.md_5.bungee.api.chat.TextComponent;
+
+import java.lang.reflect.Method;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -43,6 +47,12 @@ public final class TeamCommand implements CommandExecutor {
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm z").withZone(ZoneId.systemDefault());
 
     private static final String SPY_PERMISSION = "sorekillteams.spy";
+
+    // Cooldown bypass for /team home
+    private static final String HOME_BYPASS_COOLDOWN_PERMISSION = "sorekillteams.home.bypasscooldown";
+
+    // Track running warmup tasks per player so countdowns don't stack
+    private final Map<UUID, Integer> warmupTaskByPlayer = new HashMap<>();
 
     public TeamCommand(SorekillTeamsPlugin plugin) {
         this.plugin = plugin;
@@ -395,11 +405,94 @@ public final class TeamCommand implements CommandExecutor {
                         return true;
                     }
 
-                    if (args.length < 2) {
-                        plugin.msg().send(p, "team_home_usage");
+                    TeamHomeService hs = plugin.teamHomes();
+                    List<TeamHome> homes = hs.listHomes(team.getId());
+                    if (homes == null || homes.isEmpty()) {
+                        plugin.msg().send(p, "team_homes_none");
                         return true;
                     }
 
+                    boolean bypassCooldown = p.hasPermission(HOME_BYPASS_COOLDOWN_PERMISSION);
+
+                    // /team home  (no name)
+                    if (args.length < 2) {
+                        if (homes.size() == 1) {
+                            TeamHome only = homes.get(0);
+                            String key = only.getName();
+                            if (key == null || key.isBlank()) {
+                                plugin.msg().send(p, "team_home_usage");
+                                return true;
+                            }
+
+                            // proxy restriction
+                            boolean proxyMode = plugin.getConfig().getBoolean("homes.proxy_mode", false);
+                            boolean restrict = plugin.getConfig().getBoolean("homes.restrict_to_same_server", true);
+                            if (proxyMode && restrict) {
+                                String currentServer = plugin.getConfig().getString("homes.server_name", "default");
+                                if (currentServer != null && !currentServer.equalsIgnoreCase(only.getServerName())) {
+                                    plugin.msg().send(p, "team_home_wrong_server",
+                                            "{home}", only.getDisplayName(),
+                                            "{server}", only.getServerName()
+                                    );
+                                    return true;
+                                }
+                            }
+
+                            // cooldown (bypassable)
+                            int cooldownSeconds = Math.max(0, plugin.getConfig().getInt("homes.cooldown_seconds", 0));
+                            long now = System.currentTimeMillis();
+                            if (!bypassCooldown && cooldownSeconds > 0) {
+                                long last = hs.getLastTeleportMs(team.getId());
+                                long waitMs = cooldownSeconds * 1000L;
+                                if (now - last < waitMs) {
+                                    long remain = (waitMs - (now - last) + 999) / 1000;
+                                    plugin.msg().send(p, "team_home_cooldown", "{seconds}", String.valueOf(remain));
+                                    return true;
+                                }
+                            }
+
+                            // warmup w/ ACTIONBAR countdown
+                            int warmupSeconds = Math.max(0, plugin.getConfig().getInt("homes.warmup_seconds", 0));
+                            if (warmupSeconds > 0) {
+                                plugin.msg().send(p, "team_home_warmup", "{seconds}", String.valueOf(warmupSeconds));
+
+                                final UUID teamId = team.getId();
+                                startActionbarWarmupTeleport(
+                                        p,
+                                        teamId,
+                                        key,
+                                        warmupSeconds,
+                                        () -> hs.getHome(teamId, key).orElse(null),
+                                        hs
+                                );
+                                return true;
+                            }
+
+                            // instant teleport
+                            Location dest = only.toLocationOrNull();
+                            if (dest == null) {
+                                plugin.msg().send(p, "team_home_world_missing", "{home}", only.getDisplayName());
+                                return true;
+                            }
+
+                            p.teleport(dest);
+                            hs.setLastTeleportMs(team.getId(), now);
+                            plugin.msg().send(p, "team_home_teleported", "{home}", only.getDisplayName());
+                            return true;
+                        }
+
+                        String list = homes.stream()
+                                .filter(Objects::nonNull)
+                                .map(h -> (h.getDisplayName() == null || h.getDisplayName().isBlank()) ? h.getName() : h.getDisplayName())
+                                .filter(n -> n != null && !n.isBlank())
+                                .sorted(String.CASE_INSENSITIVE_ORDER)
+                                .collect(Collectors.joining(Msg.color("&7, &f")));
+
+                        plugin.msg().send(p, "team_home_multiple", "{homes}", list);
+                        return true;
+                    }
+
+                    // /team home <name>
                     String raw = String.join(" ", Arrays.copyOfRange(args, 1, args.length)).trim();
                     String key = normalizeHomeName(raw);
                     if (key.isBlank()) {
@@ -407,13 +500,13 @@ public final class TeamCommand implements CommandExecutor {
                         return true;
                     }
 
-                    TeamHomeService hs = plugin.teamHomes();
                     TeamHome h = hs.getHome(team.getId(), key).orElse(null);
                     if (h == null) {
                         plugin.msg().send(p, "team_home_not_found", "{home}", raw);
                         return true;
                     }
 
+                    // proxy restriction
                     boolean proxyMode = plugin.getConfig().getBoolean("homes.proxy_mode", false);
                     boolean restrict = plugin.getConfig().getBoolean("homes.restrict_to_same_server", true);
                     if (proxyMode && restrict) {
@@ -427,9 +520,10 @@ public final class TeamCommand implements CommandExecutor {
                         }
                     }
 
+                    // cooldown (bypassable)
                     int cooldownSeconds = Math.max(0, plugin.getConfig().getInt("homes.cooldown_seconds", 0));
                     long now = System.currentTimeMillis();
-                    if (cooldownSeconds > 0) {
+                    if (!bypassCooldown && cooldownSeconds > 0) {
                         long last = hs.getLastTeleportMs(team.getId());
                         long waitMs = cooldownSeconds * 1000L;
                         if (now - last < waitMs) {
@@ -439,34 +533,24 @@ public final class TeamCommand implements CommandExecutor {
                         }
                     }
 
+                    // warmup w/ ACTIONBAR countdown
                     int warmupSeconds = Math.max(0, plugin.getConfig().getInt("homes.warmup_seconds", 0));
                     if (warmupSeconds > 0) {
                         plugin.msg().send(p, "team_home_warmup", "{seconds}", String.valueOf(warmupSeconds));
 
                         final UUID teamId = team.getId();
-                        plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
-                            if (!p.isOnline()) return;
-
-                            Team currentTeam = plugin.teams().getTeamByPlayer(p.getUniqueId()).orElse(null);
-                            if (currentTeam == null || !teamId.equals(currentTeam.getId())) return;
-
-                            TeamHome hh = hs.getHome(teamId, key).orElse(null);
-                            if (hh == null) return;
-
-                            Location dest = hh.toLocationOrNull();
-                            if (dest == null) {
-                                plugin.msg().send(p, "team_home_world_missing", "{home}", hh.getDisplayName());
-                                return;
-                            }
-
-                            p.teleport(dest);
-                            hs.setLastTeleportMs(teamId, System.currentTimeMillis());
-                            plugin.msg().send(p, "team_home_teleported", "{home}", hh.getDisplayName());
-                        }, warmupSeconds * 20L);
-
+                        startActionbarWarmupTeleport(
+                                p,
+                                teamId,
+                                key,
+                                warmupSeconds,
+                                () -> hs.getHome(teamId, key).orElse(null),
+                                hs
+                        );
                         return true;
                     }
 
+                    // instant teleport
                     Location dest = h.toLocationOrNull();
                     if (dest == null) {
                         plugin.msg().send(p, "team_home_world_missing", "{home}", h.getDisplayName());
@@ -963,6 +1047,161 @@ public final class TeamCommand implements CommandExecutor {
         }
     }
 
+    // ------------------------------------------------------------
+    // ACTIONBAR warmup countdown + teleport (SPIGOT-SAFE)
+    // ------------------------------------------------------------
+
+    @FunctionalInterface
+    private interface HomeSupplier {
+        TeamHome get();
+    }
+
+    /**
+     * Shows actionbar countdown: warmupSeconds .. 1 (live), then teleports at exactly warmupSeconds seconds after command.
+     */
+    private void startActionbarWarmupTeleport(Player p,
+                                              UUID teamId,
+                                              String homeKey,
+                                              int warmupSeconds,
+                                              HomeSupplier homeSupplier,
+                                              TeamHomeService hs) {
+
+        cancelWarmup(p.getUniqueId());
+
+        final UUID playerId = p.getUniqueId();
+        final int warm = Math.max(1, warmupSeconds);
+
+        // show immediately (5)
+        sendActionbarKey(p, "actionbar.team_home_warmup",
+                "{seconds}", String.valueOf(warm)
+        );
+
+        // then 4..1 each second, teleport on the next tick
+        final int[] remaining = new int[]{warm - 1};
+
+        int taskId = plugin.getServer().getScheduler().runTaskTimer(plugin, () -> {
+            Player live = Bukkit.getPlayer(playerId);
+            if (live == null || !live.isOnline()) {
+                cancelWarmup(playerId);
+                return;
+            }
+
+            Team currentTeam = plugin.teams().getTeamByPlayer(playerId).orElse(null);
+            if (currentTeam == null || !teamId.equals(currentTeam.getId())) {
+                clearActionBar(live);
+                cancelWarmup(playerId);
+                return;
+            }
+
+            if (remaining[0] > 0) {
+                sendActionbarKey(live, "actionbar.team_home_warmup",
+                        "{seconds}", String.valueOf(remaining[0])
+                );
+                remaining[0]--;
+                return;
+            }
+
+            // teleport now
+            TeamHome hh = homeSupplier.get();
+            if (hh == null) {
+                clearActionBar(live);
+                cancelWarmup(playerId);
+                return;
+            }
+
+            Location dest = hh.toLocationOrNull();
+            if (dest == null) {
+                clearActionBar(live);
+                plugin.msg().send(live, "team_home_world_missing", "{home}", hh.getDisplayName());
+                cancelWarmup(playerId);
+                return;
+            }
+
+            live.teleport(dest);
+            hs.setLastTeleportMs(teamId, System.currentTimeMillis());
+
+            clearActionBar(live);
+            plugin.msg().send(live, "team_home_teleported", "{home}", hh.getDisplayName());
+
+            cancelWarmup(playerId);
+        }, 20L, 20L).getTaskId();
+
+        warmupTaskByPlayer.put(playerId, taskId);
+    }
+
+    private void cancelWarmup(UUID playerId) {
+        Integer taskId = warmupTaskByPlayer.remove(playerId);
+        if (taskId != null) {
+            plugin.getServer().getScheduler().cancelTask(taskId);
+        }
+    }
+
+    // ------------------------------------------------------------
+    // ACTIONBAR helpers (works on Spigot + Paper)
+    // ------------------------------------------------------------
+
+    private void clearActionBar(Player p) {
+        if (p == null) return;
+        // empty component
+        p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent(""));
+    }
+
+    private void sendActionbarKey(Player p, String key, String... placeholders) {
+        String text = resolveMessageString(key);
+
+        // fallback so it still works even if Msg has no raw getter
+        if (text == null || text.isBlank()) {
+            if ("actionbar.team_home_warmup".equalsIgnoreCase(key)) {
+                text = "{prefix}&7Teleporting in &f{seconds}&7...";
+            } else {
+                return;
+            }
+        }
+
+        String out = text;
+        if (placeholders != null) {
+            for (int i = 0; i + 1 < placeholders.length; i += 2) {
+                String k = placeholders[i];
+                String v = placeholders[i + 1];
+                if (k != null && v != null) out = out.replace(k, v);
+            }
+        }
+
+        out = out.replace("{prefix}", plugin.msg().prefix());
+
+        // convert & -> § and send via Spigot actionbar
+        String colored = Msg.color(out);
+        p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent(colored));
+    }
+
+    private String resolveMessageString(String key) {
+        if (key == null || key.isBlank()) return null;
+
+        Object msg = plugin.msg();
+        if (msg == null) return null;
+
+        for (String methodName : List.of("get", "raw", "message", "resolve", "string")) {
+            try {
+                Method m = msg.getClass().getMethod(methodName, String.class);
+                Object val = m.invoke(msg, key);
+                if (val instanceof String s) return s;
+            } catch (Exception ignored) {}
+        }
+
+        String flat = key.replace('.', '_');
+        for (String methodName : List.of("get", "raw", "message", "resolve", "string")) {
+            try {
+                Method m = msg.getClass().getMethod(methodName, String.class);
+                Object val = m.invoke(msg, flat);
+                if (val instanceof String s) return s;
+            } catch (Exception ignored) {}
+        }
+
+        return null;
+    }
+
+    // ------------------------------------------------------------
+
     private Optional<UUID> resolveInviteTeamIdByName(UUID invitee, String teamArgRaw) {
         String wanted = normalize(teamArgRaw);
 
@@ -1020,7 +1259,6 @@ public final class TeamCommand implements CommandExecutor {
         return null;
     }
 
-    // join args AFTER index (e.g. after "spy")
     private String joinArgsAfter(String[] args, int indexOfSubcommand) {
         int start = Math.max(0, indexOfSubcommand + 1);
         StringBuilder sb = new StringBuilder();

@@ -158,10 +158,13 @@ homes:
   server_name: "survival"
 
   # Warmup before teleporting (seconds)
-  warmup_seconds: 0
+  warmup_seconds: 5
 
   # Cooldown between home teleports (seconds)
-  cooldown_seconds: 0
+  cooldown_seconds: 60
+
+  # Teleport sound
+  teleport_sound: 
 
   # 1.0.8+ future-proofing for proxy networks (no effect unless implemented)
   proxy_mode: false

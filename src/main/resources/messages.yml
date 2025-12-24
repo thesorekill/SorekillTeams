@@ -24,7 +24,7 @@ admin_action_disabled: "{prefix}&cThat admin action is disabled in config."
 # =========================
 # Team - Usage / Help
 # =========================
-team_usage: "{prefix}&7Use: /team create|invite|invites|accept|deny|leave|disband|info|ff|kick|transfer|rename|spy|chat|homes|home|sethome|delhome"
+team_usage: "{prefix}&7Use: /team create:invite:invites:accept:deny:leave:disband:info:ff:kick:transfer:rename:spy:chat:homes:home:sethome:delhome"
 team_create_usage: "{prefix}&7Usage: /team create <name>"
 team_invite_usage: "{prefix}&7Usage: /team invite <player>"
 team_invites_tip: "{prefix}&7Tip: /team accept <team> or /team deny <team>"
@@ -37,7 +37,7 @@ team_rename_usage: "{prefix}&7Usage: /team rename <name>"
 team_spy_usage: "{prefix}&7Usage: /team spy <team> | /team spy list | /team spy off"
 
 # Team Chat (usage helper)
-teamchat_usage: "{prefix}&7Usage: /team chat <on|off|toggle|status>  &8(or /tc <message>)"
+teamchat_usage: "{prefix}&7Usage: /team chat <on:off:toggle:status>  &8(or /tc <message>)"
 
 # =========================
 # Team - Common Errors
@@ -173,6 +173,7 @@ team_home_deleted: "{prefix}&cTeam home deleted: &f{home}&c."
 team_home_not_found: "{prefix}&cTeam home not found: &f{home}&c."
 
 team_homes_none: "{prefix}&7Your team has no homes set."
+team_home_multiple: "{prefix}&7Multiple team homes found. Use: &f/team home <name>&7. &8(&f{homes}&8)"
 team_homes_header: "{prefix}&8&m-----&r &c{team} Homes &8&m-----"
 team_homes_entry: "{prefix}&f- &c{home} &8(&7{world}&8)"
 
@@ -195,7 +196,7 @@ friendly_fire_blocked: "{prefix}&cYou can't damage your teammates."
 team_ff_status_on: "{prefix}&aTeam friendly fire is now &fON&a."
 team_ff_status_off: "{prefix}&cTeam friendly fire is now &fOFF&c."
 team_ff_status: "{prefix}&7Team friendly fire: {state}"
-team_ff_usage: "{prefix}&7Usage: /team ff <on|off|toggle|status>"
+team_ff_usage: "{prefix}&7Usage: /team ff <on:off:toggle:status>"
 
 # =========================
 # Update Checker
@@ -207,3 +208,9 @@ update_notify_op: "{prefix}&eSorekillTeams update available: &f{latest}&e (you a
 update_check_failed: "&cUpdate check failed: &7{reason}"
 update_up_to_date_player: "{prefix}&aUp to date. Running &f{current}&a."
 update_outdated_player: "{prefix}&eUpdate available: &f{latest}&e (you are on &f{current}&e). &b{url}"
+
+# =========================
+# Actionbar Messages
+# =========================
+actionbar:
+  team_home_warmup: "&7Teleporting in &f{seconds}&7..."
