@@ -163,9 +163,6 @@ homes:
   # Cooldown between home teleports (seconds)
   cooldown_seconds: 60
 
-  # Teleport sound
-  teleport_sound: 
-
   # 1.0.8+ future-proofing for proxy networks (no effect unless implemented)
   proxy_mode: false
 

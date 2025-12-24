@@ -182,6 +182,7 @@ team_home_max_reached: "{prefix}&cYour team has reached the max homes limit (&f{
 team_home_cooldown: "{prefix}&cYour team must wait &f{seconds}&c seconds before teleporting again."
 team_home_warmup: "{prefix}&7Teleporting in &f{seconds}&7 seconds..."
 team_home_teleported: "{prefix}&aTeleported to team home: &f{home}&a."
+team_home_cancelled_move: "{prefix}&cTeleportation cancelled, you moved."
 team_home_world_missing: "{prefix}&cThat home’s world is missing/unloaded: &f{home}&c."
 team_home_wrong_server: "{prefix}&cThat home (&f{home}&c) is on server &f{server}&c."
 
@@ -213,4 +214,5 @@ update_outdated_player: "{prefix}&eUpdate available: &f{latest}&e (you are on &f
 # Actionbar Messages
 # =========================
 actionbar:
-  team_home_warmup: "&7Teleporting in &f{seconds}&7..."
+  team_home_warmup: "&7Teleporting in &a{seconds}&7..."
+  team_home_cancelled_move: "&cTeleportation cancelled"
