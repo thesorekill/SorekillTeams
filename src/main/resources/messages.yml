@@ -7,6 +7,8 @@
 # Placeholders:
 #   {prefix} is automatically replaced with the "prefix" value below.
 #   Other placeholders vary per message (ex: {team}, {player}, {seconds}, etc.)
+# Messages and Actionbar
+#   Can be turned off if you set the message or action bar message to ""
 # ============================================================================
 
 # ----------------------------------------------------------------------------
