@@ -47,9 +47,14 @@ public final class TeamInvite {
         return nowMs >= expiresAtMs;
     }
 
+    /**
+     * Seconds remaining until expiry (ceil, never negative).
+     * Example: 1ms remaining -> 1s (not 0s).
+     */
     public long getSecondsRemaining(long nowMs) {
-        long rem = (expiresAtMs - nowMs) / 1000L;
-        return Math.max(0L, rem);
+        long diff = expiresAtMs - nowMs;
+        if (diff <= 0) return 0L;
+        return (diff + 999L) / 1000L;
     }
 
     // Record-style compatibility (if any code used inv.teamId(), etc.)

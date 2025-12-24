@@ -94,9 +94,37 @@ public final class FriendlyFireListener implements Listener {
         Optional<Team> teamOpt = teams.getTeamByPlayer(attacker.getUniqueId());
         if (teamOpt.isPresent() && teamOpt.get().isFriendlyFireEnabled()) return;
 
-        // Otherwise block it
-        e.setCancelled(true);
-        maybeMessage(attacker);
+        // 1.1.2: teammate damage scaling
+        int pct = plugin.getConfig().getInt("friendly_fire.teammate_damage", 0);
+        pct = clamp(pct, 0, 100);
+
+        if (pct <= 0) {
+            // Block it
+            e.setCancelled(true);
+            maybeMessage(attacker);
+
+            plugin.debug().log("FF blocked: " + attacker.getName() + " -> " + victim.getName()
+                    + " cause=" + e.getDamager().getType()
+                    + " dmg=" + String.format(Locale.ROOT, "%.2f", e.getDamage()));
+            return;
+        }
+
+        if (pct >= 100) {
+            // Allow full damage (effectively no FF reduction while global block is active)
+            plugin.debug().log("FF allowed full (pct=100): " + attacker.getName() + " -> " + victim.getName()
+                    + " cause=" + e.getDamager().getType()
+                    + " dmg=" + String.format(Locale.ROOT, "%.2f", e.getDamage()));
+            return;
+        }
+
+        // Reduce damage to pct%
+        double before = e.getDamage();
+        double after = before * (pct / 100.0);
+        e.setDamage(after);
+
+        plugin.debug().log("FF reduced (" + pct + "%): " + attacker.getName() + " -> " + victim.getName()
+                + " cause=" + e.getDamager().getType()
+                + " dmg=" + String.format(Locale.ROOT, "%.2f", before) + " -> " + String.format(Locale.ROOT, "%.2f", after));
     }
 
     private Player resolveAttacker(Entity damager,
@@ -141,8 +169,12 @@ public final class FriendlyFireListener implements Listener {
             }
 
             // Optionally exclude tridents from projectile attribution
-            if (!includeTridents && proj.getClass().getSimpleName().equalsIgnoreCase("Trident")) {
-                return null;
+            if (!includeTridents) {
+                // Avoid hard dependency on a specific entity class name across forks:
+                String simple = proj.getClass().getSimpleName();
+                if (simple != null && simple.equalsIgnoreCase("Trident")) {
+                    return null;
+                }
             }
 
             Object shooter = proj.getShooter();
@@ -319,5 +351,9 @@ public final class FriendlyFireListener implements Listener {
         if (plugin.msg() != null) {
             plugin.msg().send(attacker, MSG_KEY_BLOCKED);
         }
+    }
+
+    private static int clamp(int v, int min, int max) {
+        return Math.max(min, Math.min(max, v));
     }
 }

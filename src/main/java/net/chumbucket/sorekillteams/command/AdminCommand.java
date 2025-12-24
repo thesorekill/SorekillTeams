@@ -67,7 +67,6 @@ public final class AdminCommand implements CommandExecutor {
                 }
 
                 case "version", "ver", "v" -> {
-                    // ✅ FIX: now checks the new granular node you added to plugin.yml
                     if (!requirePerm(sender, "sorekillteams.admin.version")) return true;
 
                     if (debug) plugin.getLogger().info("[ADMIN-DBG] version by " + sender.getName());
@@ -238,8 +237,7 @@ public final class AdminCommand implements CommandExecutor {
     }
 
     /**
-     * Option 2: only allow online player names or UUID literals.
-     * No deprecated offline-name APIs used.
+     * Only allow online player names or UUID literals.
      */
     private UUID resolvePlayerUuidOnlineOrUuid(String arg) {
         if (arg == null || arg.isBlank()) return null;
@@ -260,7 +258,6 @@ public final class AdminCommand implements CommandExecutor {
         Player online = Bukkit.getPlayer(uuid);
         if (online != null) return online.getName();
 
-        // No offline name lookup; show short UUID
         return uuid.toString().substring(0, 8);
     }
 

@@ -63,12 +63,29 @@ public final class TeamCommand implements CommandExecutor {
             return true;
         }
 
-        // ✅ FIX: your config uses chat.debug (not commands.debug)
-        final boolean debug = plugin.getConfig().getBoolean("chat.debug", false);
+        // ✅ 1.1.2: debug flag via Debug helper (config: debug: true/false)
+        final boolean debug = plugin.debug() != null && plugin.debug().enabled();
+
         final String sub = args[0].toLowerCase(Locale.ROOT);
 
         try {
             switch (sub) {
+
+                // =========================
+                // 1.1.2: /team reload
+                // =========================
+                case "reload" -> {
+                    if (!p.hasPermission("sorekillteams.reload") && !p.hasPermission("sorekillteams.admin")) {
+                        plugin.msg().send(p, "no_permission");
+                        return true;
+                    }
+
+                    plugin.reloadEverything();
+                    plugin.msg().send(p, "plugin_reloaded"); // add to messages.yml (or swap to Msg.ok below if you prefer)
+
+                    if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " ran /team reload");
+                    return true;
+                }
 
                 // =========================
                 // 1.1.0: /team chat ...
@@ -179,8 +196,8 @@ public final class TeamCommand implements CommandExecutor {
                     }
 
                     // /team spy <team name...>
-                    // ✅ FIX: join args AFTER the subcommand index (args[0] == "spy") => start from args[1]
-                    String teamNameRaw = joinArgsAfter(args, 0); // join after index 0 => args[1..]
+                    // ✅ join args AFTER index (args[0] == "spy") => start from args[1]
+                    String teamNameRaw = joinArgsAfter(args, 0); // args[1..]
                     if (teamNameRaw.isBlank()) {
                         plugin.msg().send(p, "team_spy_usage");
                         return true;
@@ -287,7 +304,7 @@ public final class TeamCommand implements CommandExecutor {
                 // invites (list)
                 // =========================
                 case "invites" -> {
-                    // ✅ FIX: plugin.yml does NOT declare sorekillteams.invites.
+                    // plugin.yml does NOT declare sorekillteams.invites.
                     // Treat listing invites as "accept/deny" level so it still works.
                     if (!(p.hasPermission("sorekillteams.accept") || p.hasPermission("sorekillteams.deny"))) {
                         plugin.msg().send(p, "no_permission");

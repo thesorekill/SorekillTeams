@@ -42,6 +42,11 @@ public final class TeamCommandTabCompleter implements TabCompleter {
 
         String sub = args[0] == null ? "" : args[0].toLowerCase(Locale.ROOT);
 
+        // /team reload (1.1.2) - no args
+        if (sub.equals("reload")) {
+            return List.of();
+        }
+
         // /team chat <...>  (1.1.0)
         if (sub.equals("chat") || sub.equals("tc") || sub.equals("teamchat")) {
             if (!isTeamChatEnabledInConfig()) return List.of();
@@ -109,10 +114,13 @@ public final class TeamCommandTabCompleter implements TabCompleter {
     private List<String> subcommandsFor(Player p) {
         List<String> subs = new ArrayList<>();
 
+        // ✅ 1.1.2 reload
+        if (p.hasPermission("sorekillteams.reload") || p.hasPermission("sorekillteams.admin")) subs.add("reload");
+
         if (p.hasPermission("sorekillteams.create")) subs.add("create");
         if (p.hasPermission("sorekillteams.invite")) subs.add("invite");
 
-        // ✅ FIX: plugin.yml does NOT ship sorekillteams.invites.
+        // plugin.yml does NOT ship sorekillteams.invites.
         // Show "invites" if the player can accept or deny.
         if (p.hasPermission("sorekillteams.accept") || p.hasPermission("sorekillteams.deny")) subs.add("invites");
 
