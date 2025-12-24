@@ -18,18 +18,19 @@ import java.util.UUID;
 
 public final class Team {
 
+    private static final String DEFAULT_NAME = "Team";
+
     private final UUID id;
+    private final long createdAtMs;
+
     private String name;
     private UUID owner;
 
-    // LinkedHashSet for deterministic order
+    // LinkedHashSet for deterministic order (stable saves / display)
     private final Set<UUID> members = new LinkedHashSet<>();
 
-    // per-team friendly fire
-    private boolean friendlyFireEnabled = false;
-
-    // created timestamp (epoch ms)
-    private final long createdAtMs;
+    // Per-team friendly fire (team setting)
+    private boolean friendlyFireEnabled;
 
     public Team(UUID id, String name, UUID owner) {
         this(id, name, owner, System.currentTimeMillis());
@@ -41,11 +42,17 @@ public final class Team {
         this.createdAtMs = createdAtMs > 0 ? createdAtMs : System.currentTimeMillis();
 
         setName(name);
-        this.members.add(owner);
+
+        // Ensure owner is always a member
+        this.members.add(this.owner);
     }
 
     public UUID getId() {
         return id;
+    }
+
+    public long getCreatedAtMs() {
+        return createdAtMs;
     }
 
     public String getName() {
@@ -57,8 +64,7 @@ public final class Team {
      * Strict validation belongs in TeamNameValidator / service layer.
      */
     public void setName(String name) {
-        String cleaned = (name == null) ? "" : name.trim().replaceAll("\\s{2,}", " ");
-        this.name = cleaned.isBlank() ? "Team" : cleaned;
+        this.name = sanitizeName(name);
     }
 
     public UUID getOwner() {
@@ -70,7 +76,7 @@ public final class Team {
      */
     public void setOwner(UUID owner) {
         this.owner = Objects.requireNonNull(owner, "owner");
-        this.members.add(owner);
+        this.members.add(this.owner);
     }
 
     /**
@@ -99,14 +105,17 @@ public final class Team {
         this.friendlyFireEnabled = friendlyFireEnabled;
     }
 
-    public long getCreatedAtMs() {
-        return createdAtMs;
-    }
-
-    /** Convenience helper if you want it. */
+    /** Convenience helper if you want it. Returns the previous (sanitized) name. */
     public String renameTo(String newName) {
-        String old = this.name;
+        final String old = this.name;
         setName(newName);
         return old;
+    }
+
+    private static String sanitizeName(String input) {
+        if (input == null) return DEFAULT_NAME;
+
+        final String cleaned = input.trim().replaceAll("\\s{2,}", " ");
+        return cleaned.isBlank() ? DEFAULT_NAME : cleaned;
     }
 }

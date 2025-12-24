@@ -20,13 +20,24 @@ import java.util.UUID;
 
 public interface TeamService {
 
+    /* ------------------------------------------------------------------------
+     * Lookup
+     * --------------------------------------------------------------------- */
+
     Optional<Team> getTeamByPlayer(UUID player);
+
     Optional<Team> getTeamById(UUID teamId);
+
     Optional<Team> getTeamByName(String teamName);
+
+    /* ------------------------------------------------------------------------
+     * Core actions
+     * --------------------------------------------------------------------- */
 
     Team createTeam(UUID owner, String name);
 
     void disbandTeam(UUID owner);
+
     void leaveTeam(UUID player);
 
     void invite(UUID inviter, UUID invitee);
@@ -45,27 +56,38 @@ public interface TeamService {
 
     void renameTeam(UUID owner, String newName);
 
-    // Team Chat
+    /* ------------------------------------------------------------------------
+     * Team chat
+     * --------------------------------------------------------------------- */
+
     boolean isTeamChatEnabled(UUID player);
+
     void setTeamChatEnabled(UUID player, boolean enabled);
+
     boolean toggleTeamChat(UUID player);
+
     void sendTeamChat(Player sender, String message);
 
-    // Spy
+    /* ------------------------------------------------------------------------
+     * Spy
+     * --------------------------------------------------------------------- */
+
     boolean toggleSpy(UUID spyPlayer, UUID teamId);
+
     void clearSpy(UUID spyPlayer);
+
     Collection<Team> getSpiedTeams(UUID spyPlayer);
 
-    // =========================
-    // Admin
-    // =========================
+    /* ------------------------------------------------------------------------
+     * Admin
+     * --------------------------------------------------------------------- */
 
     /** Force-disband a team, regardless of owner. */
     void adminDisbandTeam(UUID teamId);
 
-    /** Force-set the owner of a team, ensuring new owner is a member. */
+    /** Force-set the owner of a team, ensuring the new owner is a member. */
     void adminSetOwner(UUID teamId, UUID newOwner);
 
-    /** Force-kick a player from their team. If they are owner, disbands the team. */
+    /** Force-kick a player from their team. If they are the owner, disbands the team. */
     void adminKickPlayer(UUID player);
 }

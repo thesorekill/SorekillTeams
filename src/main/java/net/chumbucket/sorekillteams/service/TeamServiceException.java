@@ -10,32 +10,32 @@
 
 package net.chumbucket.sorekillteams.service;
 
+import java.util.Arrays;
 import java.util.Objects;
 
 /**
  * Typed service exception for stable command handling.
+ *
  * Carries:
- * - a stable error code (TeamError)
- * - optional messages.yml key + placeholder pairs for user-facing output
+ * - a stable error code ({@link TeamError})
+ * - an optional messages.yml key
+ * - optional placeholder pairs (e.g., "{seconds}", "10")
  */
 public final class TeamServiceException extends RuntimeException {
 
     private final TeamError code;
-    private final String messageKey;     // optional
-    private final String[] pairs;        // optional
+    private final String messageKey; // optional
+    private final String[] pairs;    // optional placeholder pairs
 
     public TeamServiceException(TeamError code) {
-        super(code.name());
-        this.code = Objects.requireNonNull(code, "code");
-        this.messageKey = null;
-        this.pairs = new String[0];
+        this(code, null);
     }
 
     public TeamServiceException(TeamError code, String messageKey, String... pairs) {
-        super(code.name());
+        super(code == null ? "UNKNOWN" : code.name());
         this.code = Objects.requireNonNull(code, "code");
-        this.messageKey = messageKey;
-        this.pairs = (pairs == null) ? new String[0] : pairs;
+        this.messageKey = (messageKey == null || messageKey.isBlank()) ? null : messageKey;
+        this.pairs = (pairs == null) ? new String[0] : pairs.clone();
     }
 
     public TeamError code() {
@@ -46,7 +46,19 @@ public final class TeamServiceException extends RuntimeException {
         return messageKey;
     }
 
+    /**
+     * Returns placeholder pairs as a defensive copy.
+     */
     public String[] pairs() {
-        return pairs;
+        return pairs.clone();
+    }
+
+    @Override
+    public String toString() {
+        return "TeamServiceException{" +
+                "code=" + code +
+                ", messageKey='" + messageKey + '\'' +
+                ", pairs=" + Arrays.toString(pairs) +
+                '}';
     }
 }

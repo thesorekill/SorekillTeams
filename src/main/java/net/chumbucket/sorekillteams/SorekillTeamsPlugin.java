@@ -115,6 +115,7 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         stopTask(autosaveTaskId);
         autosaveTaskId = -1;
 
+        // best-effort final save
         trySaveNowSync("shutdown");
 
         getLogger().info("SorekillTeams disabled.");
@@ -188,10 +189,6 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
      * If your SimpleTeamHomeService has a different constructor, change it here.
      */
     private TeamHomeService buildTeamHomeService() {
-        // Common variants you might have:
-        // return new SimpleTeamHomeService(this);
-        // return new SimpleTeamHomeService(this, teamHomeStorage);
-
         return new SimpleTeamHomeService();
     }
 
@@ -354,6 +351,10 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         }
     }
 
+    // =========================
+    // Exposed helpers
+    // =========================
+
     public String getMessagesFileName() { return getMessagesFileNameSafe(); }
 
     public Msg msg() { return msg; }
@@ -361,9 +362,10 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
     public TeamService teams() { return teams; }
     public TeamStorage storage() { return storage; }
-    public UpdateChecker updateChecker() { return updateChecker; }
 
     public TeamInvites invites() { return invites; }
+
+    public UpdateChecker updateChecker() { return updateChecker; }
 
     // Team homes
     public TeamHomeService teamHomes() { return teamHomes; }

@@ -19,18 +19,31 @@ import java.util.UUID;
 
 public interface TeamHomeService {
 
-    // storage helpers
+    /* ------------------------------------------------------------------------
+     * Storage helpers
+     * --------------------------------------------------------------------- */
+
     void putLoadedHome(TeamHome home);
+
     void clearAll();
+
     Collection<TeamHome> allHomes();
 
-    // team-facing
+    /* ------------------------------------------------------------------------
+     * Team-facing
+     * --------------------------------------------------------------------- */
+
     List<TeamHome> listHomes(UUID teamId);
+
     Optional<TeamHome> getHome(UUID teamId, String name);
 
     /**
      * Create or update a home for a team.
-     * @return true if saved; false if refused because team is at max homes (and name didn't already exist)
+     *
+     * @param home     Home to create/update
+     * @param maxHomes Maximum homes allowed for this team (must be >= 1)
+     * @return true if saved; false if refused because the team is at max homes
+     *         (and the name did not already exist)
      */
     boolean setHome(TeamHome home, int maxHomes);
 
@@ -38,7 +51,11 @@ public interface TeamHomeService {
 
     void clearTeam(UUID teamId);
 
-    // cooldown
+    /* ------------------------------------------------------------------------
+     * Cooldown tracking
+     * --------------------------------------------------------------------- */
+
     long getLastTeleportMs(UUID teamId);
+
     void setLastTeleportMs(UUID teamId, long ms);
 }

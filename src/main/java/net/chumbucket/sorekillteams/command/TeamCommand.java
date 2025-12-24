@@ -390,6 +390,9 @@ public final class TeamCommand implements CommandExecutor, Listener {
                     }
 
                     List<TeamHome> list = plugin.teamHomes().listHomes(team.getId());
+                    if (list == null) list = List.of();
+                    list = list.stream().filter(Objects::nonNull).toList();
+
                     if (list.isEmpty()) {
                         plugin.msg().send(p, "team_homes_none");
                         return true;
@@ -427,7 +430,12 @@ public final class TeamCommand implements CommandExecutor, Listener {
 
                     TeamHomeService hs = plugin.teamHomes();
                     List<TeamHome> homes = hs.listHomes(team.getId());
-                    if (homes == null || homes.isEmpty()) {
+                    if (homes == null) homes = List.of();
+
+                    // ✅ Fix: remove possible nulls so homes.get(0) is never null (eliminates IDE NPE warning)
+                    homes = homes.stream().filter(Objects::nonNull).toList();
+
+                    if (homes.isEmpty()) {
                         plugin.msg().send(p, "team_homes_none");
                         return true;
                     }
@@ -439,6 +447,7 @@ public final class TeamCommand implements CommandExecutor, Listener {
                     if (args.length < 2) {
                         if (homes.size() == 1) {
                             TeamHome only = homes.get(0);
+
                             String key = only.getName();
                             if (key == null || key.isBlank()) {
                                 plugin.msg().send(p, "team_home_usage");
@@ -469,7 +478,6 @@ public final class TeamCommand implements CommandExecutor, Listener {
                         }
 
                         String list = homes.stream()
-                                .filter(Objects::nonNull)
                                 .map(h -> (h.getDisplayName() == null || h.getDisplayName().isBlank()) ? h.getName() : h.getDisplayName())
                                 .filter(n -> n != null && !n.isBlank())
                                 .sorted(String.CASE_INSENSITIVE_ORDER)
@@ -888,6 +896,7 @@ public final class TeamCommand implements CommandExecutor, Listener {
                     String ownerName = nameOf(t.getOwner());
 
                     String members = t.getMembers().stream()
+                            .filter(Objects::nonNull)
                             .map(uuid -> {
                                 Player online = Bukkit.getPlayer(uuid);
                                 if (online != null) return Msg.color("&a" + online.getName());
@@ -1017,7 +1026,7 @@ public final class TeamCommand implements CommandExecutor, Listener {
         sendActionbar(p, "actionbar.team_home_cancelled_move");
         p.playSound(p.getLocation(), CANCEL_SOUND, 1.0f, 1.0f);
 
-        // chat cancel (you added this key)
+        // chat cancel
         plugin.msg().send(p, "team_home_cancelled_move");
 
         // clear the bar shortly after
@@ -1075,19 +1084,16 @@ public final class TeamCommand implements CommandExecutor, Listener {
             if (sess != null && hasMoved(sess.startLoc, live.getLocation())) {
                 cancelWarmup(playerId);
 
-                // actionbar cancel + sound
                 sendActionbar(live, "actionbar.team_home_cancelled_move");
                 live.playSound(live.getLocation(), CANCEL_SOUND, 1.0f, 1.0f);
 
-                // chat cancel (key you added)
                 plugin.msg().send(live, "team_home_cancelled_move");
 
-                // clear bar shortly after
                 Bukkit.getScheduler().runTaskLater(plugin, () -> clearActionbar(live), 30L);
                 return;
             }
 
-            // show countdown (your yml key)
+            // show countdown
             sendActionbar(live, "actionbar.team_home_warmup", "{seconds}", String.valueOf(remaining[0]));
 
             // tick sound each second

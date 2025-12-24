@@ -22,6 +22,19 @@ import java.util.UUID;
 
 public final class YamlTeamHomeStorage implements TeamHomeStorage {
 
+    private static final String ROOT_TEAMS = "teams";
+
+    private static final String KEY_DISPLAY = "display";
+    private static final String KEY_WORLD = "world";
+    private static final String KEY_X = "x";
+    private static final String KEY_Y = "y";
+    private static final String KEY_Z = "z";
+    private static final String KEY_YAW = "yaw";
+    private static final String KEY_PITCH = "pitch";
+    private static final String KEY_CREATED_AT = "created_at_ms";
+    private static final String KEY_CREATED_BY = "created_by";
+    private static final String KEY_SERVER = "server";
+
     private final SorekillTeamsPlugin plugin;
     private final File file;
 
@@ -34,58 +47,47 @@ public final class YamlTeamHomeStorage implements TeamHomeStorage {
     public void loadAll(TeamHomeService homes) throws Exception {
         if (homes == null) return;
 
-        if (!plugin.getDataFolder().exists() && !plugin.getDataFolder().mkdirs()) {
-            throw new IllegalStateException("Could not create data folder");
-        }
+        ensureDataFolder();
+
+        homes.clearAll();
 
         if (!file.exists()) {
-            homes.clearAll();
             return;
         }
 
         YamlConfiguration yml = YamlConfiguration.loadConfiguration(file);
-        homes.clearAll();
-
-        ConfigurationSection root = yml.getConfigurationSection("teams");
+        ConfigurationSection root = yml.getConfigurationSection(ROOT_TEAMS);
         if (root == null) return;
 
         for (String teamKey : root.getKeys(false)) {
-            UUID teamId;
-            try {
-                teamId = UUID.fromString(teamKey);
-            } catch (Exception ignored) {
-                continue;
-            }
+            UUID teamId = parseUuid(teamKey);
+            if (teamId == null) continue;
 
             ConfigurationSection secTeam = root.getConfigurationSection(teamKey);
             if (secTeam == null) continue;
 
-            for (String homeKey : secTeam.getKeys(false)) {
-                ConfigurationSection sec = secTeam.getConfigurationSection(homeKey);
+            for (String homeKeyRaw : secTeam.getKeys(false)) {
+                ConfigurationSection sec = secTeam.getConfigurationSection(homeKeyRaw);
                 if (sec == null) continue;
 
-                String display = sec.getString("display", homeKey);
-                String world = sec.getString("world", "");
-                double x = sec.getDouble("x");
-                double y = sec.getDouble("y");
-                double z = sec.getDouble("z");
-                float yaw = (float) sec.getDouble("yaw", 0.0);
-                float pitch = (float) sec.getDouble("pitch", 0.0);
-                long createdAt = sec.getLong("created_at_ms", System.currentTimeMillis());
+                String homeKey = normalizeKey(homeKeyRaw);
+                if (homeKey.isBlank()) continue;
 
-                UUID createdBy = null;
-                String createdByRaw = sec.getString("created_by", "");
-                if (createdByRaw != null && !createdByRaw.isBlank()) {
-                    try { createdBy = UUID.fromString(createdByRaw); } catch (Exception ignored) {}
-                }
+                String display = sec.getString(KEY_DISPLAY, homeKeyRaw);
+                String world = sec.getString(KEY_WORLD, "");
+                double x = sec.getDouble(KEY_X);
+                double y = sec.getDouble(KEY_Y);
+                double z = sec.getDouble(KEY_Z);
+                float yaw = (float) sec.getDouble(KEY_YAW, 0.0);
+                float pitch = (float) sec.getDouble(KEY_PITCH, 0.0);
+                long createdAt = sec.getLong(KEY_CREATED_AT, System.currentTimeMillis());
 
-                String server = sec.getString("server", "");
-
-                String normalized = homeKey.trim().toLowerCase(Locale.ROOT);
+                UUID createdBy = parseUuid(sec.getString(KEY_CREATED_BY, ""));
+                String server = sec.getString(KEY_SERVER, "");
 
                 TeamHome home = new TeamHome(
                         teamId,
-                        normalized,
+                        homeKey,
                         display,
                         world,
                         x, y, z,
@@ -104,37 +106,59 @@ public final class YamlTeamHomeStorage implements TeamHomeStorage {
     public void saveAll(TeamHomeService homes) throws Exception {
         if (homes == null) return;
 
-        if (!plugin.getDataFolder().exists() && !plugin.getDataFolder().mkdirs()) {
-            throw new IllegalStateException("Could not create data folder");
-        }
+        ensureDataFolder();
 
         YamlConfiguration yml = new YamlConfiguration();
-        ConfigurationSection root = yml.createSection("teams");
+        ConfigurationSection root = yml.createSection(ROOT_TEAMS);
 
         for (TeamHome h : homes.allHomes()) {
             if (h == null || h.getTeamId() == null) continue;
 
             String teamKey = h.getTeamId().toString();
-            String homeKey = h.getName() == null ? "" : h.getName().trim().toLowerCase(Locale.ROOT);
+            String homeKey = normalizeKey(h.getName());
             if (homeKey.isBlank()) continue;
 
             ConfigurationSection secTeam = root.getConfigurationSection(teamKey);
             if (secTeam == null) secTeam = root.createSection(teamKey);
 
+            // Create (or replace) the home section deterministically
             ConfigurationSection sec = secTeam.createSection(homeKey);
 
-            sec.set("display", h.getDisplayName());
-            sec.set("world", h.getWorld());
-            sec.set("x", h.getX());
-            sec.set("y", h.getY());
-            sec.set("z", h.getZ());
-            sec.set("yaw", (double) h.getYaw());
-            sec.set("pitch", (double) h.getPitch());
-            sec.set("created_at_ms", h.getCreatedAtMs());
-            sec.set("created_by", h.getCreatedBy() == null ? "" : h.getCreatedBy().toString());
-            sec.set("server", h.getServerName());
+            sec.set(KEY_DISPLAY, h.getDisplayName());
+            sec.set(KEY_WORLD, h.getWorld());
+            sec.set(KEY_X, h.getX());
+            sec.set(KEY_Y, h.getY());
+            sec.set(KEY_Z, h.getZ());
+            sec.set(KEY_YAW, (double) h.getYaw());
+            sec.set(KEY_PITCH, (double) h.getPitch());
+            sec.set(KEY_CREATED_AT, h.getCreatedAtMs());
+            sec.set(KEY_CREATED_BY, h.getCreatedBy() == null ? "" : h.getCreatedBy().toString());
+            sec.set(KEY_SERVER, h.getServerName());
         }
 
         yml.save(file);
+    }
+
+    private void ensureDataFolder() {
+        File folder = plugin.getDataFolder();
+        if (!folder.exists() && !folder.mkdirs()) {
+            throw new IllegalStateException("Could not create data folder: " + folder.getAbsolutePath());
+        }
+    }
+
+    private static String normalizeKey(String s) {
+        if (s == null) return "";
+        return s.trim().toLowerCase(Locale.ROOT).replaceAll("\\s{2,}", " ");
+    }
+
+    private static UUID parseUuid(String raw) {
+        if (raw == null) return null;
+        String s = raw.trim();
+        if (s.isEmpty()) return null;
+        try {
+            return UUID.fromString(s);
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
     }
 }

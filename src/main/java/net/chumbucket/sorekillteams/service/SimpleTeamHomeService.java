@@ -16,7 +16,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Locale; // ✅ FIX: needed for Locale.ROOT
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -32,11 +32,15 @@ public final class SimpleTeamHomeService implements TeamHomeService {
 
     @Override
     public void putLoadedHome(TeamHome home) {
-        if (home == null || home.getTeamId() == null) return;
+        if (home == null) return;
+
+        UUID teamId = home.getTeamId();
+        if (teamId == null) return;
+
         String key = normalize(home.getName());
         if (key.isBlank()) return;
 
-        homes.computeIfAbsent(home.getTeamId(), __ -> new ConcurrentHashMap<>())
+        homes.computeIfAbsent(teamId, __ -> new ConcurrentHashMap<>())
                 .put(key, home);
     }
 
@@ -59,6 +63,7 @@ public final class SimpleTeamHomeService implements TeamHomeService {
     @Override
     public List<TeamHome> listHomes(UUID teamId) {
         if (teamId == null) return List.of();
+
         Map<String, TeamHome> inner = homes.get(teamId);
         if (inner == null || inner.isEmpty()) return List.of();
 
@@ -70,20 +75,23 @@ public final class SimpleTeamHomeService implements TeamHomeService {
     @Override
     public Optional<TeamHome> getHome(UUID teamId, String name) {
         if (teamId == null) return Optional.empty();
+
         String key = normalize(name);
         if (key.isBlank()) return Optional.empty();
 
         Map<String, TeamHome> inner = homes.get(teamId);
-        if (inner == null) return Optional.empty();
+        if (inner == null || inner.isEmpty()) return Optional.empty();
 
         return Optional.ofNullable(inner.get(key));
     }
 
     @Override
     public boolean setHome(TeamHome home, int maxHomes) {
-        if (home == null || home.getTeamId() == null) return false;
+        if (home == null) return false;
 
         UUID teamId = home.getTeamId();
+        if (teamId == null) return false;
+
         String key = normalize(home.getName());
         if (key.isBlank()) return false;
 
@@ -102,14 +110,18 @@ public final class SimpleTeamHomeService implements TeamHomeService {
     @Override
     public boolean deleteHome(UUID teamId, String name) {
         if (teamId == null) return false;
+
         String key = normalize(name);
         if (key.isBlank()) return false;
 
         Map<String, TeamHome> inner = homes.get(teamId);
-        if (inner == null) return false;
+        if (inner == null || inner.isEmpty()) return false;
 
         TeamHome removed = inner.remove(key);
-        if (inner.isEmpty()) homes.remove(teamId);
+
+        if (inner.isEmpty()) {
+            homes.remove(teamId, inner); // safer with CHM under concurrency
+        }
 
         return removed != null;
     }

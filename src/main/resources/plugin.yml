@@ -1,43 +1,63 @@
-name: SorekillTeams
-version: 1.1.3
-main: net.chumbucket.sorekillteams.SorekillTeamsPlugin
-api-version: 1.21
-author: Sorekill
-website: https://github.com/thesorekill/SorekillTeams
+# ============================================================================
+# SorekillTeams - plugin.yml
+# ============================================================================
+# Paper/Spigot plugin descriptor.
+# - Registers commands (and their default permission gates)
+# - Declares optional dependencies (softdepend)
+# - Documents permission nodes + inheritance
+# ============================================================================
 
+name: SorekillTeams
+version: ${project.version}
+main: net.chumbucket.sorekillteams.SorekillTeamsPlugin
+api-version: "1.21"
+
+author: Sorekill
+website: "https://github.com/thesorekill/SorekillTeams"
+
+# Optional integrations (plugin will still run without these)
 softdepend:
   - PlaceholderAPI
   - MiniPlaceholders
 
+# ============================================================================
+# Commands
+# ============================================================================
 commands:
   team:
     description: Teams command
-    usage: /team
+    usage: "/team"
     aliases: [teams, t]
     permission: sorekillteams.use
 
   tc:
     description: Send a team chat message (or toggle team chat mode)
-    usage: /tc [message...]
+    usage: "/tc [message...]"
     aliases: [teamchat]
     permission: sorekillteams.teamchat
 
   sorekillteams:
     description: SorekillTeams admin command
-    usage: /sorekillteams reload|version|disband|setowner|kick|info
+    usage: "/sorekillteams reload|version|disband|setowner|kick|info"
     aliases: [st]
     permission: sorekillteams.admin
 
+# ============================================================================
+# Permissions
+# ============================================================================
 permissions:
-  # -------------------------
-  # Wildcard
-  # -------------------------
+
+  # --------------------------------------------------------------------------
+  # Wildcard (everything)
+  # --------------------------------------------------------------------------
   sorekillteams.*:
     description: Grants access to all SorekillTeams permissions
     default: op
     children:
+      # Core usage
       sorekillteams.use: true
-      sorekillteams.admin: true
+
+      # Player team actions
       sorekillteams.reload: true
       sorekillteams.create: true
       sorekillteams.invite: true
@@ -51,26 +71,37 @@ permissions:
       sorekillteams.transfer: true
       sorekillteams.rename: true
       sorekillteams.ff: true
+
+      # Chat + spy
       sorekillteams.teamchat: true
       sorekillteams.chat: true
       sorekillteams.spy: true
+
+      # Combat bypass
       sorekillteams.friendlyfire.bypass: true
+
+      # Max-members pattern
       sorekillteams.max.*: true
+
+      # Admin umbrella + granular admin nodes
+      sorekillteams.admin: true
       sorekillteams.admin.reload: true
       sorekillteams.admin.version: true
       sorekillteams.admin.disband: true
       sorekillteams.admin.setowner: true
       sorekillteams.admin.kick: true
       sorekillteams.admin.info: true
+
+      # Homes
       sorekillteams.homes: true
       sorekillteams.home: true
       sorekillteams.sethome: true
       sorekillteams.delhome: true
       sorekillteams.home.bypasscooldown: true
-      
-  # -------------------------
+
+  # --------------------------------------------------------------------------
   # Base
-  # -------------------------
+  # --------------------------------------------------------------------------
   sorekillteams.use:
     description: Allows using /team
     default: false
@@ -79,17 +110,17 @@ permissions:
     description: Allows using /sorekillteams (admin controls)
     default: op
 
-  # -------------------------
+  # --------------------------------------------------------------------------
   # /team reload (player-facing convenience)
-  # (TeamCommand checks sorekillteams.reload OR sorekillteams.admin)
-  # -------------------------
+  # TeamCommand checks sorekillteams.reload OR sorekillteams.admin
+  # --------------------------------------------------------------------------
   sorekillteams.reload:
     description: Allows /team reload
     default: op
 
-  # -------------------------
+  # --------------------------------------------------------------------------
   # Team management (player)
-  # -------------------------
+  # --------------------------------------------------------------------------
   sorekillteams.create:
     description: Create a team
     default: false
@@ -98,7 +129,6 @@ permissions:
     description: Invite players to your team (owner)
     default: false
 
-  # 1.1.3: invite list has its own permission
   sorekillteams.invites:
     description: View your pending team invites
     default: false
@@ -139,9 +169,9 @@ permissions:
     description: Toggle friendly fire for your team (owner)
     default: false
 
-  # -------------------------
+  # --------------------------------------------------------------------------
   # Team chat
-  # -------------------------
+  # --------------------------------------------------------------------------
   sorekillteams.teamchat:
     description: Use team chat features (toggle/team chat commands)
     default: false
@@ -151,33 +181,34 @@ permissions:
     description: Legacy permission node (use sorekillteams.teamchat instead)
     default: false
     children:
-      sorekillteams.teamchat: false
+      sorekillteams.teamchat: true
 
-  # -------------------------
+  # --------------------------------------------------------------------------
   # Team spy
-  # -------------------------
+  # --------------------------------------------------------------------------
   sorekillteams.spy:
     description: Spy on team chat messages
     default: op
 
-  # -------------------------
+  # --------------------------------------------------------------------------
   # Friendly fire bypass
-  # -------------------------
+  # --------------------------------------------------------------------------
   sorekillteams.friendlyfire.bypass:
     description: Bypass friendly fire protection (damage teammates even if blocked)
     default: op
 
-  # -------------------------
+  # --------------------------------------------------------------------------
   # Max members permission pattern
   # Example: sorekillteams.max.6 gives max members 6
-  # -------------------------
+  # (This wildcard is just documentation; your code scans sorekillteams.max.<n>)
+  # --------------------------------------------------------------------------
   sorekillteams.max.*:
     description: Permission node pattern for team max sizes
     default: false
 
-  # -------------------------
-  # Admin action nodes
-  # -------------------------
+  # --------------------------------------------------------------------------
+  # Admin action nodes (granular)
+  # --------------------------------------------------------------------------
   sorekillteams.admin.reload:
     description: Reload config/messages/storage
     default: op
@@ -202,9 +233,9 @@ permissions:
     description: View team info for any team
     default: op
 
-  # -------------------------
+  # --------------------------------------------------------------------------
   # Team homes
-  # -------------------------
+  # --------------------------------------------------------------------------
   sorekillteams.homes:
     description: View/list team homes
     default: false

@@ -39,14 +39,14 @@ public final class TeamChatListener implements Listener {
         final String name = player.getName();
 
         // Only intercept if they are in team chat mode
-        if (!plugin.teams().isTeamChatEnabled(uuid)) return;
+        if (plugin.teams() == null || !plugin.teams().isTeamChatEnabled(uuid)) return;
 
         final boolean debug = plugin.getConfig().getBoolean("chat.debug", false);
 
-        final String msgRaw = event.getMessage();
-        if (msgRaw == null) return;
+        final String raw = event.getMessage();
+        if (raw == null) return;
 
-        final String msg = msgRaw.trim();
+        final String msg = raw.trim();
         if (msg.isEmpty()) return;
 
         // Cancel normal chat
@@ -59,8 +59,8 @@ public final class TeamChatListener implements Listener {
         // IMPORTANT: schedule on main thread; do NOT use Bukkit APIs that require main thread here
         plugin.getServer().getScheduler().runTask(plugin, () -> {
             try {
-                Player live = Bukkit.getPlayer(uuid);
-                if (live == null) {
+                final Player live = Bukkit.getPlayer(uuid);
+                if (live == null || !live.isOnline()) {
                     if (debug) plugin.getLogger().info("[TC-DBG] abort send (offline) " + name);
                     return;
                 }
