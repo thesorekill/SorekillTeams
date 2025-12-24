@@ -9,11 +9,15 @@
 
 update_checker:
   enabled: true
-  github:
-    owner: "thesorekill"
-    repo: "SorekillTeams"
 
-  # Notify ops in-game if an update is available
+  spigot:
+    # Option A: easiest (exact page you linked)
+    history_url: "https://www.spigotmc.org/resources/sorekillteams.131034/history"
+
+    # Option B: build URL (don’t set history_url if you use this)
+    # resource_id: 131034
+    # slug: "sorekillteams"
+
   notify_ops_on_join: true
 
 storage:

@@ -123,7 +123,6 @@ public final class TeamCommand implements CommandExecutor {
                         }
                         default -> {
                             // Keep it simple: show usage line already present in messages.yml
-                            // (you currently say: "teamchat_toggle_disabled ... Use /tc <message>.")
                             plugin.msg().send(p, "teamchat_toggle_disabled");
                             return true;
                         }
@@ -180,8 +179,8 @@ public final class TeamCommand implements CommandExecutor {
                     }
 
                     // /team spy <team name...>
-                    // ✅ FIX: join args AFTER "spy" (index 0), not after arg1 (index 1)
-                    String teamNameRaw = joinArgsAfter(args, 0);
+                    // ✅ FIX: join args AFTER the subcommand index (args[0] == "spy") => start from args[1]
+                    String teamNameRaw = joinArgsAfter(args, 0); // join after index 0 => args[1..]
                     if (teamNameRaw.isBlank()) {
                         plugin.msg().send(p, "team_spy_usage");
                         return true;
@@ -213,9 +212,8 @@ public final class TeamCommand implements CommandExecutor {
                 }
 
                 // =========================
-                // existing cases
+                // create
                 // =========================
-
                 case "create" -> {
                     if (!p.hasPermission("sorekillteams.create")) {
                         plugin.msg().send(p, "no_permission");
@@ -243,6 +241,9 @@ public final class TeamCommand implements CommandExecutor {
                     return true;
                 }
 
+                // =========================
+                // invite
+                // =========================
                 case "invite" -> {
                     if (!p.hasPermission("sorekillteams.invite")) {
                         plugin.msg().send(p, "no_permission");
@@ -282,19 +283,25 @@ public final class TeamCommand implements CommandExecutor {
                     return true;
                 }
 
+                // =========================
+                // invites (list)
+                // =========================
                 case "invites" -> {
-                    if (!p.hasPermission("sorekillteams.invites")) {
+                    // ✅ FIX: plugin.yml does NOT declare sorekillteams.invites.
+                    // Treat listing invites as "accept/deny" level so it still works.
+                    if (!(p.hasPermission("sorekillteams.accept") || p.hasPermission("sorekillteams.deny"))) {
                         plugin.msg().send(p, "no_permission");
                         return true;
                     }
 
                     Collection<TeamInvite> invs = plugin.teams().getInvites(p.getUniqueId());
-                    if (invs.isEmpty()) {
+                    if (invs == null || invs.isEmpty()) {
                         plugin.msg().send(p, "team_invites_none");
                         return true;
                     }
 
                     List<TeamInvite> sorted = invs.stream()
+                            .filter(Objects::nonNull)
                             .sorted(Comparator.comparingLong(TeamInvite::getExpiresAtMs))
                             .toList();
 
@@ -324,6 +331,9 @@ public final class TeamCommand implements CommandExecutor {
                     return true;
                 }
 
+                // =========================
+                // accept
+                // =========================
                 case "accept" -> {
                     if (!p.hasPermission("sorekillteams.accept")) {
                         plugin.msg().send(p, "no_permission");
@@ -373,6 +383,9 @@ public final class TeamCommand implements CommandExecutor {
                     return true;
                 }
 
+                // =========================
+                // deny
+                // =========================
                 case "deny" -> {
                     if (!p.hasPermission("sorekillteams.deny")) {
                         plugin.msg().send(p, "no_permission");
@@ -401,6 +414,9 @@ public final class TeamCommand implements CommandExecutor {
                     return true;
                 }
 
+                // =========================
+                // leave
+                // =========================
                 case "leave" -> {
                     if (!p.hasPermission("sorekillteams.leave")) {
                         plugin.msg().send(p, "no_permission");
@@ -414,6 +430,9 @@ public final class TeamCommand implements CommandExecutor {
                     return true;
                 }
 
+                // =========================
+                // disband
+                // =========================
                 case "disband" -> {
                     if (!p.hasPermission("sorekillteams.disband")) {
                         plugin.msg().send(p, "no_permission");
@@ -426,6 +445,9 @@ public final class TeamCommand implements CommandExecutor {
                     return true;
                 }
 
+                // =========================
+                // rename
+                // =========================
                 case "rename" -> {
                     if (!p.hasPermission("sorekillteams.rename")) {
                         plugin.msg().send(p, "no_permission");
@@ -460,6 +482,9 @@ public final class TeamCommand implements CommandExecutor {
                     return true;
                 }
 
+                // =========================
+                // kick
+                // =========================
                 case "kick" -> {
                     if (!p.hasPermission("sorekillteams.kick")) {
                         plugin.msg().send(p, "no_permission");
@@ -499,6 +524,9 @@ public final class TeamCommand implements CommandExecutor {
                     return true;
                 }
 
+                // =========================
+                // transfer
+                // =========================
                 case "transfer" -> {
                     if (!p.hasPermission("sorekillteams.transfer")) {
                         plugin.msg().send(p, "no_permission");
@@ -538,6 +566,9 @@ public final class TeamCommand implements CommandExecutor {
                     return true;
                 }
 
+                // =========================
+                // info
+                // =========================
                 case "info" -> {
                     if (!p.hasPermission("sorekillteams.info")) {
                         plugin.msg().send(p, "no_permission");
@@ -592,6 +623,9 @@ public final class TeamCommand implements CommandExecutor {
                     return true;
                 }
 
+                // =========================
+                // ff / friendlyfire
+                // =========================
                 case "ff", "friendlyfire" -> {
                     if (!p.hasPermission("sorekillteams.ff")) {
                         plugin.msg().send(p, "no_permission");
@@ -668,7 +702,12 @@ public final class TeamCommand implements CommandExecutor {
     private Optional<UUID> resolveInviteTeamIdByName(UUID invitee, String teamArgRaw) {
         String wanted = normalize(teamArgRaw);
 
-        for (TeamInvite inv : plugin.teams().getInvites(invitee)) {
+        Collection<TeamInvite> invites = plugin.teams().getInvites(invitee);
+        if (invites == null || invites.isEmpty()) return Optional.empty();
+
+        for (TeamInvite inv : invites) {
+            if (inv == null) continue;
+
             String teamName = plugin.teams().getTeamById(inv.getTeamId())
                     .map(Team::getName)
                     .orElse(inv.getTeamName() != null ? inv.getTeamName() : "Team");

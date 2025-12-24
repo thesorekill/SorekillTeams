@@ -46,7 +46,7 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     private int invitePurgeTaskId = -1;
     private int autosaveTaskId = -1;
 
-    // ✅ 1.0.6: prevent overlapping saves (autosave + command-triggered saves + disable)
+    // ✅ Prevent overlapping saves (autosave + command-triggered saves + disable)
     private final AtomicBoolean saveInFlight = new AtomicBoolean(false);
 
     @Override
@@ -73,9 +73,9 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         // Commands
         registerCommand("sorekillteams", new AdminCommand(this));
         registerCommand("team", new TeamCommand(this));
-        registerCommand("tc", new TeamChatCommand(this));
+        registerCommand("tc", new TeamChatCommand(this)); // /tc
 
-        // ✅ 1.0.7: Tab completion for /team
+        // Tab completion
         registerTabCompleter("team", new TeamCommandTabCompleter(this));
 
         // Listeners
@@ -94,14 +94,14 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
     @Override
     public void onDisable() {
-        // Cancel tasks (Bukkit also cancels on disable, but this keeps ids clean)
+        // Stop tasks first (so we don't race with shutdown save)
         stopTask(invitePurgeTaskId);
         invitePurgeTaskId = -1;
 
         stopTask(autosaveTaskId);
         autosaveTaskId = -1;
 
-        // ✅ 1.0.6: final save (sync) with overlap guard
+        // Final save (best-effort). If an async save is mid-flight, we skip to avoid corruption.
         trySaveNowSync("shutdown");
 
         getLogger().info("SorekillTeams disabled.");
@@ -127,14 +127,15 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         try {
             if (storage == null) storage = new YamlTeamStorage(this);
 
-            // Recreate service to ensure a clean state (simple + reliable for patch releases)
-            this.teams = new SimpleTeamService(this, storage);
-            storage.loadAll(teams);
+            // Load into a fresh service, then swap only if successful
+            TeamService fresh = new SimpleTeamService(this, storage);
+            storage.loadAll(fresh);
+            this.teams = fresh;
 
             // Clean expired invites immediately after reload
             invites.purgeExpiredAll(System.currentTimeMillis());
         } catch (Exception e) {
-            getLogger().severe("Reload failed while loading teams. Current in-memory state may be incomplete.");
+            getLogger().severe("Reload failed while loading teams. Keeping previous in-memory teams.");
             getLogger().severe("Reason: " + e.getClass().getSimpleName() + ": " + e.getMessage());
         }
 
@@ -221,7 +222,6 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
         long ticks = seconds * 20L;
 
-        // ✅ 1.0.6: async autosave to avoid hitching the main thread
         autosaveTaskId = getServer().getScheduler().runTaskTimerAsynchronously(
                 this,
                 () -> trySaveNowAsync("autosave"),
@@ -231,12 +231,13 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     }
 
     private void trySaveNowAsync(String reason) {
-        // Don't overlap saves
         if (!saveInFlight.compareAndSet(false, true)) return;
 
         try {
-            if (storage != null && teams != null) {
-                storage.saveAll(teams);
+            TeamStorage s = this.storage;
+            TeamService t = this.teams;
+            if (s != null && t != null) {
+                s.saveAll(t);
             }
         } catch (Exception e) {
             getLogger().severe("Save failed (" + reason + "): " + e.getClass().getSimpleName() + ": " + e.getMessage());
@@ -246,12 +247,13 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     }
 
     private void trySaveNowSync(String reason) {
-        // If async is saving, skip. On disable we’d rather not deadlock/hang.
         if (!saveInFlight.compareAndSet(false, true)) return;
 
         try {
-            if (storage != null && teams != null) {
-                storage.saveAll(teams);
+            TeamStorage s = this.storage;
+            TeamService t = this.teams;
+            if (s != null && t != null) {
+                s.saveAll(t);
             }
         } catch (Exception e) {
             getLogger().severe("Save failed (" + reason + "): " + e.getClass().getSimpleName() + ": " + e.getMessage());
@@ -261,7 +263,6 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     }
 
     private void stopTask(int taskId) {
-        // treat 0 as a valid id just in case (defensive)
         if (taskId < 0) return;
         try {
             getServer().getScheduler().cancelTask(taskId);
@@ -270,10 +271,6 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
     /**
      * Keeps update checker state consistent with config.
-     * We cannot reliably "unregister" listeners mid-runtime, so we:
-     * - Register the join listener once
-     * - Keep the checker instance available once created
-     * - Only perform checks when enabled
      */
     private void syncUpdateCheckerWithConfig() {
         boolean enabled = getConfig().getBoolean("update_checker.enabled", true);
@@ -290,6 +287,8 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
         if (enabled) {
             updateChecker.checkNowAsync();
+        } else {
+            getLogger().info("UpdateChecker disabled in config.");
         }
     }
 

@@ -17,8 +17,6 @@ import java.util.stream.Collectors;
 /**
  * In-memory invite store:
  * targetUuid -> (teamId -> invite)
- *
- * Prevents duplicates, supports expiry, and purges automatically.
  */
 public final class TeamInvites {
 
@@ -28,7 +26,7 @@ public final class TeamInvites {
     private static final int MAX_INVITES_PER_TARGET = 25;
 
     /* ------------------------------------------------------------
-     * Convenience overloads (compat with older callers)
+     * Convenience overloads (compat)
      * ------------------------------------------------------------ */
 
     public List<TeamInvite> listActive(UUID target) {
@@ -63,7 +61,6 @@ public final class TeamInvites {
         Map<UUID, TeamInvite> inner = invitesByTarget.get(target);
         if (inner == null || inner.isEmpty()) return List.of();
 
-        // Stable ordering: soonest-expiring first, then teamId as tie-breaker
         return inner.values().stream()
                 .filter(Objects::nonNull)
                 .sorted(Comparator
@@ -83,7 +80,6 @@ public final class TeamInvites {
         TeamInvite inv = inner.get(teamId);
         if (inv == null) return Optional.empty();
 
-        // Extra safety: if it expired between purge and here (rare)
         if (inv.isExpired(nowMs)) {
             remove(target, teamId);
             return Optional.empty();
@@ -107,10 +103,9 @@ public final class TeamInvites {
         Map<UUID, TeamInvite> inner =
                 invitesByTarget.computeIfAbsent(target, __ -> new ConcurrentHashMap<>());
 
-        // If an invite already exists for this team, only allow if it is expired (replace it).
         TeamInvite existing = inner.get(teamId);
         if (existing != null && !existing.isExpired(nowMs)) {
-            return false; // still active => duplicate
+            return false;
         }
 
         // Cap invites per target; evict soonest-to-expire to make room

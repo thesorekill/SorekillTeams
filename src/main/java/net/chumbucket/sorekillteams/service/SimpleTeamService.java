@@ -30,18 +30,14 @@ public final class SimpleTeamService implements TeamService {
 
     private final SorekillTeamsPlugin plugin;
     private final TeamStorage storage;
-    private final TeamInvites invites; // invite store
+    private final TeamInvites invites;
 
     private final Map<UUID, Team> teams = new ConcurrentHashMap<>();
     private final Map<UUID, UUID> playerToTeam = new ConcurrentHashMap<>();
 
-    // Players who have /tc toggled ON
     private final Set<UUID> teamChatToggled = ConcurrentHashMap.newKeySet();
-
-    // Invite cooldown: inviter -> next allowed timestamp (ms)
     private final Map<UUID, Long> inviteCooldownUntil = new ConcurrentHashMap<>();
 
-    // 1.0.8: spyPlayer -> teamIds they are spying on
     private final Map<UUID, Set<UUID>> spyTargets = new ConcurrentHashMap<>();
 
     public SimpleTeamService(SorekillTeamsPlugin plugin, TeamStorage storage) {
@@ -50,7 +46,10 @@ public final class SimpleTeamService implements TeamService {
         this.invites = plugin.invites();
     }
 
-    // called by storage on load
+    // =========================
+    // Storage helpers
+    // =========================
+
     public void putLoadedTeam(Team t) {
         if (t == null) return;
 
@@ -63,12 +62,7 @@ public final class SimpleTeamService implements TeamService {
         }
     }
 
-    /**
-     * ✅ Storage helper: replace in-memory state with a loaded set of teams.
-     * This fixes callers that expect SimpleTeamService.putAllTeams(...)
-     */
     public void putAllTeams(Collection<Team> loadedTeams) {
-        // wipe current state
         teams.clear();
         playerToTeam.clear();
         teamChatToggled.clear();
@@ -76,19 +70,16 @@ public final class SimpleTeamService implements TeamService {
         spyTargets.clear();
 
         if (loadedTeams == null || loadedTeams.isEmpty()) return;
-
-        for (Team t : loadedTeams) {
-            putLoadedTeam(t);
-        }
+        for (Team t : loadedTeams) putLoadedTeam(t);
     }
 
-    /**
-     * ✅ Storage helper: enumerate all teams (YamlTeamStorage expects this).
-     */
     public Collection<Team> allTeams() {
-        // Return a snapshot copy so callers can't mutate our internal map view
         return new ArrayList<>(teams.values());
     }
+
+    // =========================
+    // Lookup
+    // =========================
 
     @Override
     public Optional<Team> getTeamByPlayer(UUID player) {
@@ -116,10 +107,15 @@ public final class SimpleTeamService implements TeamService {
         return Optional.empty();
     }
 
+    // =========================
+    // Core actions
+    // =========================
+
     @Override
     public Team createTeam(UUID owner, String name) {
         if (owner == null) throw new TeamServiceException(TeamError.INVALID_PLAYER, "invalid_player");
-        if (playerToTeam.containsKey(owner)) throw new TeamServiceException(TeamError.ALREADY_IN_TEAM, "team_already_in_team");
+        if (playerToTeam.containsKey(owner))
+            throw new TeamServiceException(TeamError.ALREADY_IN_TEAM, "team_already_in_team");
 
         final String cleanName = normalizeTeamNameOrThrow(name);
 
@@ -147,7 +143,8 @@ public final class SimpleTeamService implements TeamService {
         Team t = getTeamByPlayer(owner).orElseThrow(() ->
                 new TeamServiceException(TeamError.NOT_IN_TEAM, "team_not_in_team"));
 
-        if (!t.getOwner().equals(owner)) throw new TeamServiceException(TeamError.NOT_OWNER, "team_not_owner");
+        if (!t.getOwner().equals(owner))
+            throw new TeamServiceException(TeamError.NOT_OWNER, "team_not_owner");
 
         broadcastToTeam(t, plugin.msg().format(
                 "team_team_disbanded",
@@ -155,7 +152,6 @@ public final class SimpleTeamService implements TeamService {
         ));
 
         internalDisbandTeam(t);
-
         safeSave();
     }
 
@@ -181,18 +177,19 @@ public final class SimpleTeamService implements TeamService {
 
         safeSave();
 
-        String name = nameOf(player);
         broadcastToTeam(t, plugin.msg().format(
                 "team_member_left",
-                "{player}", name,
+                "{player}", nameOf(player),
                 "{team}", Msg.color(t.getName())
         ));
     }
 
     @Override
     public void invite(UUID inviter, UUID invitee) {
-        if (inviter == null || invitee == null) throw new TeamServiceException(TeamError.INVALID_PLAYER, "invalid_player");
-        if (inviter.equals(invitee)) throw new TeamServiceException(TeamError.INVITE_SELF, "team_invite_self");
+        if (inviter == null || invitee == null)
+            throw new TeamServiceException(TeamError.INVALID_PLAYER, "invalid_player");
+        if (inviter.equals(invitee))
+            throw new TeamServiceException(TeamError.INVITE_SELF, "team_invite_self");
 
         Team t = getTeamByPlayer(inviter).orElseThrow(() ->
                 new TeamServiceException(TeamError.NOT_IN_TEAM, "team_not_in_team"));
@@ -206,8 +203,10 @@ public final class SimpleTeamService implements TeamService {
             throw new TeamServiceException(TeamError.TEAM_FULL, "team_team_full");
         }
 
-        if (t.isMember(invitee)) throw new TeamServiceException(TeamError.ALREADY_MEMBER, "team_already_member");
-        if (playerToTeam.containsKey(invitee)) throw new TeamServiceException(TeamError.INVITEE_IN_TEAM, "team_invitee_in_team");
+        if (t.isMember(invitee))
+            throw new TeamServiceException(TeamError.ALREADY_MEMBER, "team_already_member");
+        if (playerToTeam.containsKey(invitee))
+            throw new TeamServiceException(TeamError.INVITEE_IN_TEAM, "team_invitee_in_team");
 
         int cdSeconds = Math.max(0, plugin.getConfig().getInt("invites.cooldown_seconds", 10));
         long now = System.currentTimeMillis();
@@ -248,7 +247,6 @@ public final class SimpleTeamService implements TeamService {
         if (invitee == null) return Optional.empty();
 
         long now = System.currentTimeMillis();
-
         List<TeamInvite> active = invites.listActive(invitee, now);
         if (active.isEmpty()) return Optional.empty();
 
@@ -264,7 +262,8 @@ public final class SimpleTeamService implements TeamService {
             inv = invites.get(invitee, id, now).orElse(null);
             if (inv == null) return Optional.empty();
         } else {
-            if (active.size() > 1) throw new TeamServiceException(TeamError.MULTIPLE_INVITES, "team_multiple_invites_hint");
+            if (active.size() > 1)
+                throw new TeamServiceException(TeamError.MULTIPLE_INVITES, "team_multiple_invites_hint");
             inv = active.get(0);
         }
 
@@ -283,9 +282,7 @@ public final class SimpleTeamService implements TeamService {
         dedupeMembers(t);
 
         int max = getTeamMaxMembers(t);
-        int currentSize = uniqueMemberCount(t);
-
-        if (currentSize >= max) {
+        if (uniqueMemberCount(t) >= max) {
             throw new TeamServiceException(TeamError.TEAM_FULL, "team_team_full");
         }
 
@@ -294,15 +291,13 @@ public final class SimpleTeamService implements TeamService {
         dedupeMembers(t);
 
         playerToTeam.put(invitee, t.getId());
-
         invites.remove(invitee, inv.getTeamId());
 
         safeSave();
 
-        String name = nameOf(invitee);
         broadcastToTeam(t, plugin.msg().format(
                 "team_member_joined",
-                "{player}", name,
+                "{player}", nameOf(invitee),
                 "{team}", Msg.color(t.getName())
         ));
 
@@ -320,7 +315,8 @@ public final class SimpleTeamService implements TeamService {
         if (teamId != null && teamId.isPresent()) {
             return invites.remove(invitee, teamId.get());
         } else {
-            if (active.size() > 1) throw new TeamServiceException(TeamError.MULTIPLE_INVITES, "team_multiple_invites_hint");
+            if (active.size() > 1)
+                throw new TeamServiceException(TeamError.MULTIPLE_INVITES, "team_multiple_invites_hint");
             return invites.remove(invitee, active.get(0).getTeamId());
         }
     }
@@ -342,15 +338,19 @@ public final class SimpleTeamService implements TeamService {
 
     @Override
     public void kickMember(UUID owner, UUID member) {
-        if (owner == null || member == null) throw new TeamServiceException(TeamError.INVALID_PLAYER, "invalid_player");
+        if (owner == null || member == null)
+            throw new TeamServiceException(TeamError.INVALID_PLAYER, "invalid_player");
 
         Team t = getTeamByPlayer(owner).orElseThrow(() ->
                 new TeamServiceException(TeamError.NOT_IN_TEAM, "team_not_in_team"));
 
-        if (!t.getOwner().equals(owner)) throw new TeamServiceException(TeamError.NOT_OWNER, "team_not_owner");
+        if (!t.getOwner().equals(owner))
+            throw new TeamServiceException(TeamError.NOT_OWNER, "team_not_owner");
 
-        if (member.equals(t.getOwner())) throw new TeamServiceException(TeamError.CANNOT_KICK_OWNER, "team_cannot_kick_owner");
-        if (!t.isMember(member)) throw new TeamServiceException(TeamError.TARGET_NOT_MEMBER, "team_target_not_member");
+        if (member.equals(t.getOwner()))
+            throw new TeamServiceException(TeamError.CANNOT_KICK_OWNER, "team_cannot_kick_owner");
+        if (!t.isMember(member))
+            throw new TeamServiceException(TeamError.TARGET_NOT_MEMBER, "team_target_not_member");
 
         t.getMembers().remove(member);
         ensureOwnerInMembers(t);
@@ -363,25 +363,28 @@ public final class SimpleTeamService implements TeamService {
 
         safeSave();
 
-        String memberName = nameOf(member);
         broadcastToTeam(t, plugin.msg().format(
                 "team_member_kicked_broadcast",
-                "{player}", memberName,
+                "{player}", nameOf(member),
                 "{team}", Msg.color(t.getName())
         ));
     }
 
     @Override
     public void transferOwnership(UUID owner, UUID newOwner) {
-        if (owner == null || newOwner == null) throw new TeamServiceException(TeamError.INVALID_PLAYER, "invalid_player");
+        if (owner == null || newOwner == null)
+            throw new TeamServiceException(TeamError.INVALID_PLAYER, "invalid_player");
 
         Team t = getTeamByPlayer(owner).orElseThrow(() ->
                 new TeamServiceException(TeamError.NOT_IN_TEAM, "team_not_in_team"));
 
-        if (!t.getOwner().equals(owner)) throw new TeamServiceException(TeamError.NOT_OWNER, "team_not_owner");
+        if (!t.getOwner().equals(owner))
+            throw new TeamServiceException(TeamError.NOT_OWNER, "team_not_owner");
 
-        if (owner.equals(newOwner)) throw new TeamServiceException(TeamError.TRANSFER_SELF, "team_transfer_self");
-        if (!t.isMember(newOwner)) throw new TeamServiceException(TeamError.TARGET_NOT_MEMBER, "team_target_not_member");
+        if (owner.equals(newOwner))
+            throw new TeamServiceException(TeamError.TRANSFER_SELF, "team_transfer_self");
+        if (!t.isMember(newOwner))
+            throw new TeamServiceException(TeamError.TARGET_NOT_MEMBER, "team_target_not_member");
 
         t.setOwner(newOwner);
         ensureOwnerInMembers(t);
@@ -389,22 +392,23 @@ public final class SimpleTeamService implements TeamService {
 
         safeSave();
 
-        String newOwnerName = nameOf(newOwner);
         broadcastToTeam(t, plugin.msg().format(
                 "team_owner_transferred_broadcast",
-                "{owner}", newOwnerName,
+                "{owner}", nameOf(newOwner),
                 "{team}", Msg.color(t.getName())
         ));
     }
 
     @Override
     public void renameTeam(UUID owner, String newName) {
-        if (owner == null) throw new TeamServiceException(TeamError.INVALID_PLAYER, "invalid_player");
+        if (owner == null)
+            throw new TeamServiceException(TeamError.INVALID_PLAYER, "invalid_player");
 
         Team t = getTeamByPlayer(owner).orElseThrow(() ->
                 new TeamServiceException(TeamError.NOT_IN_TEAM, "team_not_in_team"));
 
-        if (!t.getOwner().equals(owner)) throw new TeamServiceException(TeamError.NOT_OWNER, "team_not_owner");
+        if (!t.getOwner().equals(owner))
+            throw new TeamServiceException(TeamError.NOT_OWNER, "team_not_owner");
 
         String cleaned = normalizeTeamNameOrThrow(newName);
 
@@ -421,12 +425,18 @@ public final class SimpleTeamService implements TeamService {
 
         safeSave();
 
+        // Send "renamed" broadcast; your messages key expects {team} and {by}
         broadcastToTeam(t, plugin.msg().format(
                 "team_renamed_broadcast",
-                "{old}", Msg.color(old),
-                "{team}", Msg.color(t.getName())
+                "{team}", Msg.color(t.getName()),
+                "{by}", nameOf(owner),
+                "{old}", Msg.color(old) // harmless extra if your formatter ignores unknowns
         ));
     }
+
+    // =========================
+    // Team chat
+    // =========================
 
     @Override
     public boolean isTeamChatEnabled(UUID player) {
@@ -443,10 +453,7 @@ public final class SimpleTeamService implements TeamService {
     @Override
     public boolean toggleTeamChat(UUID player) {
         if (player == null) return false;
-        if (teamChatToggled.contains(player)) {
-            teamChatToggled.remove(player);
-            return false;
-        }
+        if (teamChatToggled.remove(player)) return false;
         teamChatToggled.add(player);
         return true;
     }
@@ -467,9 +474,8 @@ public final class SimpleTeamService implements TeamService {
             return;
         }
 
-        if (message == null) message = "";
-        message = message.trim();
-        if (message.isEmpty()) return;
+        String msg = (message == null ? "" : message.trim());
+        if (msg.isEmpty()) return;
 
         String fmt = plugin.getConfig().getString(
                 "chat.format",
@@ -479,23 +485,20 @@ public final class SimpleTeamService implements TeamService {
             fmt = "&8&l(&c&l{team}&8&l) &f{player} &8&l> &c{message}";
         }
 
-        String teamName = Msg.color(team.getName());
-        String coloredMsg = Msg.color(message);
-
         String out = Msg.color(
                 fmt.replace("{player}", sender.getName())
-                        .replace("{team}", teamName)
-                        .replace("{message}", coloredMsg)
+                        .replace("{team}", Msg.color(team.getName()))
+                        .replace("{message}", Msg.color(msg))
         );
 
         broadcastToTeam(team, out);
 
-        // 1.0.8: spy broadcast (read-only / opt-in per team)
-        broadcastToSpy(team, sender.getUniqueId(), sender.getName(), coloredMsg);
+        // Spy broadcast
+        broadcastToSpy(team, sender.getUniqueId(), sender.getName(), Msg.color(msg));
     }
 
     // =========================
-    // Spy API
+    // Spy
     // =========================
 
     @Override
@@ -506,8 +509,7 @@ public final class SimpleTeamService implements TeamService {
         if (t == null) return false;
 
         Set<UUID> set = spyTargets.computeIfAbsent(spyPlayer, __ -> ConcurrentHashMap.newKeySet());
-        if (set.contains(teamId)) {
-            set.remove(teamId);
+        if (set.remove(teamId)) {
             if (set.isEmpty()) spyTargets.remove(spyPlayer);
             return false;
         }
@@ -540,7 +542,6 @@ public final class SimpleTeamService implements TeamService {
 
     private void broadcastToSpy(Team team, UUID senderUuid, String senderName, String coloredMessage) {
         if (team == null) return;
-
         if (!plugin.getConfig().getBoolean("chat.spy.enabled", true)) return;
 
         String spyFmt = plugin.getConfig().getString(
@@ -566,7 +567,7 @@ public final class SimpleTeamService implements TeamService {
             UUID spyUuid = p.getUniqueId();
             if (spyUuid == null) continue;
 
-            // Don’t send spy output to actual members (they already see team chat)
+            // don't send spy output to team members
             if (areTeammates(spyUuid, senderUuid)) continue;
 
             Set<UUID> watching = spyTargets.get(spyUuid);
@@ -590,7 +591,7 @@ public final class SimpleTeamService implements TeamService {
     }
 
     // =========================
-    // Admin (D)
+    // Admin
     // =========================
 
     @Override
@@ -615,7 +616,6 @@ public final class SimpleTeamService implements TeamService {
         Team t = teams.get(teamId);
         if (t == null) return;
 
-        // If newOwner is already in another team, kick them from it first (admin semantics)
         UUID other = playerToTeam.get(newOwner);
         if (other != null && !other.equals(teamId)) {
             adminKickPlayer(newOwner);
@@ -625,7 +625,6 @@ public final class SimpleTeamService implements TeamService {
         ensureOwnerInMembers(t);
         dedupeMembers(t);
 
-        // ensure mapping exists
         playerToTeam.put(newOwner, teamId);
 
         safeSave();
@@ -644,7 +643,6 @@ public final class SimpleTeamService implements TeamService {
         Team t = getTeamByPlayer(player).orElse(null);
         if (t == null) return;
 
-        // If owner: disband (avoids orphaned teams)
         if (player.equals(t.getOwner())) {
             adminDisbandTeam(t.getId());
             return;
@@ -668,6 +666,10 @@ public final class SimpleTeamService implements TeamService {
         ));
     }
 
+    // =========================
+    // Internals / helpers
+    // =========================
+
     private void internalDisbandTeam(Team t) {
         if (t == null) return;
 
@@ -684,8 +686,6 @@ public final class SimpleTeamService implements TeamService {
         invites.clearTeam(t.getId());
         removeTeamFromAllSpyTargets(t.getId());
     }
-
-    /* ----------------- helpers ----------------- */
 
     private void broadcastToTeam(Team team, String message) {
         if (team == null) return;
@@ -801,7 +801,8 @@ public final class SimpleTeamService implements TeamService {
                 if (n >= 1 && n <= 200) {
                     if (n > best) best = n;
                 }
-            } catch (NumberFormatException ignored) {}
+            } catch (NumberFormatException ignored) {
+            }
         }
 
         return best;

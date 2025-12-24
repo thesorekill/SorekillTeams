@@ -45,19 +45,19 @@ public interface TeamService {
 
     void renameTeam(UUID owner, String newName);
 
-    // Team Chat (A)
+    // Team Chat
     boolean isTeamChatEnabled(UUID player);
     void setTeamChatEnabled(UUID player, boolean enabled);
     boolean toggleTeamChat(UUID player);
     void sendTeamChat(Player sender, String message);
 
-    // Spy (A)
+    // Spy
     boolean toggleSpy(UUID spyPlayer, UUID teamId);
     void clearSpy(UUID spyPlayer);
     Collection<Team> getSpiedTeams(UUID spyPlayer);
 
     // =========================
-    // Admin (D)
+    // Admin
     // =========================
 
     /** Force-disband a team, regardless of owner. */

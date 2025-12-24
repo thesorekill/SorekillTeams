@@ -22,13 +22,13 @@ public final class Team {
     private String name;
     private UUID owner;
 
-    // Use LinkedHashSet for deterministic save order + stable /team info display
+    // LinkedHashSet for deterministic order
     private final Set<UUID> members = new LinkedHashSet<>();
 
-    // ✅ 1.0.5: per-team friendly fire
+    // per-team friendly fire
     private boolean friendlyFireEnabled = false;
 
-    // ✅ 1.0.5: created timestamp (epoch ms)
+    // created timestamp (epoch ms)
     private final long createdAtMs;
 
     public Team(UUID id, String name, UUID owner) {
@@ -40,8 +40,8 @@ public final class Team {
         this.owner = Objects.requireNonNull(owner, "owner");
         this.createdAtMs = createdAtMs > 0 ? createdAtMs : System.currentTimeMillis();
 
-        setName(name);        // applies normalization + non-blank fallback
-        this.members.add(owner); // owner is always a member
+        setName(name);
+        this.members.add(owner);
     }
 
     public UUID getId() {
@@ -53,8 +53,8 @@ public final class Team {
     }
 
     /**
-     * Sets the team name. Keeps it safe even if a caller passes null/blank.
-     * Actual strict validation should happen in the service (TeamNameValidator).
+     * Keeps it safe even if null/blank is passed.
+     * Strict validation belongs in TeamNameValidator / service layer.
      */
     public void setName(String name) {
         String cleaned = (name == null) ? "" : name.trim().replaceAll("\\s{2,}", " ");
@@ -66,7 +66,7 @@ public final class Team {
     }
 
     /**
-     * Transfers ownership. Also guarantees the new owner is a member.
+     * Transfers ownership. Guarantees the new owner is a member.
      */
     public void setOwner(UUID owner) {
         this.owner = Objects.requireNonNull(owner, "owner");
@@ -74,15 +74,15 @@ public final class Team {
     }
 
     /**
-     * Mutable internal set (used by storage/service).
-     * If you ever want to lock this down later, switch this to unmodifiable
-     * and add addMember/removeMember methods.
+     * Mutable internal set (service/storage rely on this).
      */
     public Set<UUID> getMembers() {
         return members;
     }
 
-    /** Read-only view (nice for commands that only display). */
+    /**
+     * Read-only view for display logic.
+     */
     public Set<UUID> getMembersView() {
         return Collections.unmodifiableSet(members);
     }
@@ -103,7 +103,7 @@ public final class Team {
         return createdAtMs;
     }
 
-    /** Optional: convenience for rename broadcasts/logs. */
+    /** Convenience helper if you want it. */
     public String renameTo(String newName) {
         String old = this.name;
         setName(newName);
