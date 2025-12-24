@@ -714,6 +714,9 @@ public final class SimpleTeamService implements TeamService {
 
         invites.clearTeam(t.getId());
         removeTeamFromAllSpyTargets(t.getId());
+        if (plugin.teamHomes() != null) {
+            plugin.teamHomes().clearTeam(t.getId());
+        }
     }
 
     private void broadcastToTeam(Team team, String message) {

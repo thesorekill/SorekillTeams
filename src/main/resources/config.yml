@@ -152,7 +152,7 @@ homes:
   enabled: true
 
   # Max homes unless player has permission overrides (if implemented)
-  max_homes: 3
+  max_homes: 1
 
   # Server name used for display/metadata on networks
   server_name: "survival"
@@ -161,7 +161,7 @@ homes:
   warmup_seconds: 0
 
   # Cooldown between home teleports (seconds)
-  cooldown_seconds: 5
+  cooldown_seconds: 0
 
   # 1.0.8+ future-proofing for proxy networks (no effect unless implemented)
   proxy_mode: false
