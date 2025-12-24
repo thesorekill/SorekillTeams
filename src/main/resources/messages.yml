@@ -142,7 +142,7 @@ team_invites_none: "{prefix}&cYou have no pending team invites."
 team_invites_header: "{prefix}&8&m-----&r &cTeam Invites &8&m-----"
 team_invites_entry: "{prefix}&fInvite: &c{team}&f from &c{inviter}&f (&7expires in &c{seconds}&7s&f)"
 
-team_invite_received: "{prefix}&f{inviter} has invited you to join the team &c{team}&f."
+team_invite_received: "{prefix}&f{inviter} &7invited you to join the team &c&l{team}. &7(/team &aaccept &7| /team &cdeny&7)"
 team_invite_sent: "{prefix}&fInvited &c{target}&f to your team &c{team}&f."
 team_invite_player_offline: "{prefix}&cThat player is not online."
 
@@ -233,3 +233,4 @@ update_outdated_player: "{prefix}&eUpdate available: &f{latest}&e (you are on &f
 actionbar:
   team_home_warmup: "&7Teleporting in &a{seconds}&7..."
   team_home_cancelled_move: "&cTeleportation cancelled"
+  team_invite_received: "&aTeam invite from &b{inviter} &afor team &c{team}"

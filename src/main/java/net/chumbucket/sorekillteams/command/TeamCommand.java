@@ -590,8 +590,12 @@ public final class TeamCommand implements CommandExecutor, Listener {
                             "{team}", Msg.color(teamName)
                     );
 
-                    plugin.msg().send(target, "team_usage");
-                    plugin.msg().send(target, "team_invites_tip");
+                    if (actionbar != null) {
+                        actionbar.send(target, "actionbar.team_invite_received",
+                                "{inviter}", p.getName(),
+                                "{team}", Msg.color(teamName)
+                        );
+                    }
 
                     if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " invited " + target.getName() + " team=" + teamName);
                     return true;
