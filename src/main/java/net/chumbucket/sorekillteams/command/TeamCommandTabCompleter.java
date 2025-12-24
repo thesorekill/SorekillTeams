@@ -35,56 +35,42 @@ public final class TeamCommandTabCompleter implements TabCompleter {
         if (!(sender instanceof Player p)) return List.of();
         if (!p.hasPermission("sorekillteams.use")) return List.of();
 
-        // /team <sub>
         if (args.length == 1) {
             return partial(args[0], subcommandsFor(p));
         }
 
         String sub = args[0] == null ? "" : args[0].toLowerCase(Locale.ROOT);
 
-        // /team reload (1.1.2) - no args
-        if (sub.equals("reload")) {
-            return List.of();
-        }
-
-        // /team chat <...>  (1.1.0)
         if (sub.equals("chat") || sub.equals("tc") || sub.equals("teamchat")) {
             if (!isTeamChatEnabledInConfig()) return List.of();
             if (!p.hasPermission("sorekillteams.teamchat")) return List.of();
 
-            // /team chat <mode>
             if (args.length == 2) {
                 return partial(args[1], List.of("on", "off", "toggle", "status"));
             }
-
             return List.of();
         }
 
-        // /team ff <...>
         if (args.length == 2 && (sub.equals("ff") || sub.equals("friendlyfire"))) {
             if (!p.hasPermission("sorekillteams.ff")) return List.of();
             return partial(args[1], List.of("on", "off", "toggle", "status"));
         }
 
-        // /team invite <player>
         if (args.length == 2 && sub.equals("invite")) {
             if (!p.hasPermission("sorekillteams.invite")) return List.of();
             return partial(args[1], onlinePlayerNamesExcluding(p.getName()));
         }
 
-        // /team kick <player|uuid>
         if (args.length == 2 && sub.equals("kick")) {
             if (!p.hasPermission("sorekillteams.kick")) return List.of();
             return partial(args[1], onlinePlayerNamesExcluding(p.getName()));
         }
 
-        // /team transfer <player|uuid>
         if (args.length == 2 && sub.equals("transfer")) {
             if (!p.hasPermission("sorekillteams.transfer")) return List.of();
             return partial(args[1], onlinePlayerNamesExcluding(p.getName()));
         }
 
-        // /team accept|deny <teamNameFromInvites...>
         if (sub.equals("accept") || sub.equals("deny")) {
             if (sub.equals("accept") && !p.hasPermission("sorekillteams.accept")) return List.of();
             if (sub.equals("deny") && !p.hasPermission("sorekillteams.deny")) return List.of();
@@ -93,16 +79,12 @@ public final class TeamCommandTabCompleter implements TabCompleter {
             return partial(joined, inviteTeamNames(p.getUniqueId()));
         }
 
-        // /team spy <list|off|clear|team...>
         if (sub.equals("spy")) {
             if (!p.hasPermission("sorekillteams.spy")) return List.of();
 
             String joined = String.join(" ", Arrays.copyOfRange(args, 1, args.length)).trim();
 
-            // Always offer keywords
             List<String> options = new ArrayList<>(List.of("list", "off", "clear"));
-
-            // Best-effort team names (no new API requirement)
             options.addAll(allTeamNames(p));
 
             return partial(joined, options);
@@ -114,15 +96,11 @@ public final class TeamCommandTabCompleter implements TabCompleter {
     private List<String> subcommandsFor(Player p) {
         List<String> subs = new ArrayList<>();
 
-        // ✅ 1.1.2 reload
-        if (p.hasPermission("sorekillteams.reload") || p.hasPermission("sorekillteams.admin")) subs.add("reload");
-
         if (p.hasPermission("sorekillteams.create")) subs.add("create");
         if (p.hasPermission("sorekillteams.invite")) subs.add("invite");
 
-        // plugin.yml does NOT ship sorekillteams.invites.
-        // Show "invites" if the player can accept or deny.
-        if (p.hasPermission("sorekillteams.accept") || p.hasPermission("sorekillteams.deny")) subs.add("invites");
+        // ✅ 1.1.3: invites is its own permission now
+        if (p.hasPermission("sorekillteams.invites")) subs.add("invites");
 
         if (p.hasPermission("sorekillteams.accept")) subs.add("accept");
         if (p.hasPermission("sorekillteams.deny")) subs.add("deny");
@@ -135,7 +113,6 @@ public final class TeamCommandTabCompleter implements TabCompleter {
         if (p.hasPermission("sorekillteams.rename")) subs.add("rename");
         if (p.hasPermission("sorekillteams.spy")) subs.add("spy");
 
-        // 1.1.0 team chat subcommand (only expose if enabled + permitted)
         if (isTeamChatEnabledInConfig() && p.hasPermission("sorekillteams.teamchat")) {
             subs.add("chat");
         }
@@ -184,15 +161,10 @@ public final class TeamCommandTabCompleter implements TabCompleter {
                 .toList();
     }
 
-    /**
-     * Best-effort list of team names for spy completion.
-     * No new TeamService APIs required.
-     */
     private List<String> allTeamNames(Player completer) {
         try {
             Set<String> names = new HashSet<>();
 
-            // Online players' current teams
             for (Player online : Bukkit.getOnlinePlayers()) {
                 plugin.teams().getTeamByPlayer(online.getUniqueId())
                         .map(Team::getName)
@@ -200,10 +172,8 @@ public final class TeamCommandTabCompleter implements TabCompleter {
                         .ifPresent(names::add);
             }
 
-            // Completer's invite team names
             names.addAll(inviteTeamNames(completer.getUniqueId()));
 
-            // Completer's spied teams (if API returns Team)
             try {
                 Collection<Team> spied = plugin.teams().getSpiedTeams(completer.getUniqueId());
                 if (spied != null) {

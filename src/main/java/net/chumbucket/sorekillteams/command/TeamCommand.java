@@ -304,9 +304,7 @@ public final class TeamCommand implements CommandExecutor {
                 // invites (list)
                 // =========================
                 case "invites" -> {
-                    // plugin.yml does NOT declare sorekillteams.invites.
-                    // Treat listing invites as "accept/deny" level so it still works.
-                    if (!(p.hasPermission("sorekillteams.accept") || p.hasPermission("sorekillteams.deny"))) {
+                    if (!p.hasPermission("sorekillteams.invites")) {
                         plugin.msg().send(p, "no_permission");
                         return true;
                     }
@@ -344,7 +342,6 @@ public final class TeamCommand implements CommandExecutor {
                         plugin.msg().send(p, "team_invites_tip");
                     }
 
-                    if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " viewed invites count=" + sorted.size());
                     return true;
                 }
 

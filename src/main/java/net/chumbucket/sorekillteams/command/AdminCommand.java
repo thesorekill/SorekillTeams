@@ -77,6 +77,12 @@ public final class AdminCommand implements CommandExecutor {
                 case "disband" -> {
                     if (!requirePerm(sender, "sorekillteams.admin.disband")) return true;
 
+                    // ✅ 1.1.3: respect admin safety toggle
+                    if (!plugin.getConfig().getBoolean("admin.allow_force_disband", true)) {
+                        plugin.msg().send(sender, "admin_action_disabled");
+                        return true;
+                    }
+
                     if (args.length < 2) {
                         sender.sendMessage(Msg.color(plugin.msg().prefix()
                                 + "&7Usage: /" + label + " disband <team>"));
@@ -101,6 +107,12 @@ public final class AdminCommand implements CommandExecutor {
 
                 case "setowner" -> {
                     if (!requirePerm(sender, "sorekillteams.admin.setowner")) return true;
+
+                    // ✅ 1.1.3: respect admin safety toggle
+                    if (!plugin.getConfig().getBoolean("admin.allow_set_owner", true)) {
+                        plugin.msg().send(sender, "admin_action_disabled");
+                        return true;
+                    }
 
                     if (args.length < 3) {
                         sender.sendMessage(Msg.color(plugin.msg().prefix()
@@ -135,6 +147,12 @@ public final class AdminCommand implements CommandExecutor {
 
                 case "kick" -> {
                     if (!requirePerm(sender, "sorekillteams.admin.kick")) return true;
+
+                    // ✅ 1.1.3: respect admin safety toggle
+                    if (!plugin.getConfig().getBoolean("admin.allow_force_kick", true)) {
+                        plugin.msg().send(sender, "admin_action_disabled");
+                        return true;
+                    }
 
                     if (args.length < 2) {
                         sender.sendMessage(Msg.color(plugin.msg().prefix()
@@ -217,8 +235,6 @@ public final class AdminCommand implements CommandExecutor {
                 .map(uuid -> {
                     Player online = Bukkit.getPlayer(uuid);
                     if (online != null) return Msg.color("&a" + online.getName());
-
-                    // No offline name lookup here; just show short UUID
                     return Msg.color("&c" + uuid.toString().substring(0, 8));
                 })
                 .sorted(String.CASE_INSENSITIVE_ORDER)
@@ -236,9 +252,6 @@ public final class AdminCommand implements CommandExecutor {
         sender.sendMessage(Msg.color(plugin.msg().prefix() + "&7Legend: &aOnline &7/ &cOffline"));
     }
 
-    /**
-     * Only allow online player names or UUID literals.
-     */
     private UUID resolvePlayerUuidOnlineOrUuid(String arg) {
         if (arg == null || arg.isBlank()) return null;
 

@@ -157,11 +157,9 @@ public final class TeamInvites {
             TeamInvite inv = entry.getValue();
 
             if (teamId == null || inv == null || inv.isExpired(nowMs)) {
-                // remove only if still mapped to the same value
                 if (teamId != null && inner.remove(teamId, inv)) {
                     purged++;
                 } else if (teamId == null) {
-                    // very rare: null key shouldn't happen, but don't trust it
                     purged++;
                 }
             }
@@ -197,6 +195,73 @@ public final class TeamInvites {
         invitesByTarget.remove(target);
     }
 
+    /* ------------------------------------------------------------
+     * 1.1.3 Anti-spam helpers (needed by SimpleTeamService)
+     * ------------------------------------------------------------ */
+
+    /** Active pending invites for a target (after purge). */
+    public int pendingForTarget(UUID target, long nowMs) {
+        if (target == null) return 0;
+        purgeExpired(target, nowMs);
+        Map<UUID, TeamInvite> inner = invitesByTarget.get(target);
+        return inner == null ? 0 : inner.size();
+    }
+
+    /** Active outgoing invites for a team across ALL targets (best-effort scan). */
+    public int outgoingForTeam(UUID teamId, long nowMs) {
+        if (teamId == null) return 0;
+
+        int count = 0;
+        for (UUID target : new ArrayList<>(invitesByTarget.keySet())) {
+            purgeExpired(target, nowMs);
+            Map<UUID, TeamInvite> inner = invitesByTarget.get(target);
+            if (inner == null || inner.isEmpty()) continue;
+
+            TeamInvite inv = inner.get(teamId);
+            if (inv != null && !inv.isExpired(nowMs)) count++;
+        }
+        return count;
+    }
+
+    /** True if target has ANY active invite from a different team than teamId. */
+    public boolean hasInviteFromOtherTeam(UUID target, UUID teamId, long nowMs) {
+        if (target == null) return false;
+
+        purgeExpired(target, nowMs);
+        Map<UUID, TeamInvite> inner = invitesByTarget.get(target);
+        if (inner == null || inner.isEmpty()) return false;
+
+        for (Map.Entry<UUID, TeamInvite> e : inner.entrySet()) {
+            UUID tid = e.getKey();
+            TeamInvite inv = e.getValue();
+            if (tid == null || inv == null) continue;
+            if (inv.isExpired(nowMs)) continue;
+            if (teamId == null || !tid.equals(teamId)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Refresh an existing (non-expired) invite for the same (target, teamId).
+     * Returns true if refreshed, false if there was nothing to refresh.
+     */
+    public boolean refresh(UUID target, UUID teamId, TeamInvite newInvite, long nowMs) {
+        if (target == null || teamId == null || newInvite == null) return false;
+
+        purgeExpired(target, nowMs);
+
+        Map<UUID, TeamInvite> inner =
+                invitesByTarget.computeIfAbsent(target, __ -> new ConcurrentHashMap<>());
+
+        TeamInvite existing = inner.get(teamId);
+        if (existing == null || existing.isExpired(nowMs)) return false;
+
+        inner.put(teamId, newInvite);
+        return true;
+    }
+
+    /* ------------------------------------------------------------ */
+
     /** Total invites across all targets (best-effort snapshot). */
     public int totalInvites() {
         int sum = 0;
@@ -212,7 +277,6 @@ public final class TeamInvites {
     }
 
     public String debugSummary() {
-        // stable snapshot
         List<Map.Entry<UUID, Map<UUID, TeamInvite>>> entries = new ArrayList<>(invitesByTarget.entrySet());
         entries.sort(Comparator.comparing(e -> e.getKey().toString()));
 
