@@ -40,10 +40,17 @@ public final class TeamFriendlyFireCommands implements TeamSubcommandModule {
             return true;
         }
 
+        // /team ff  OR  /team ff status
         if (args.length < 2 || args[1].equalsIgnoreCase("status")) {
             String state = t.isFriendlyFireEnabled() ? "&aON" : "&cOFF";
             plugin.msg().send(p, "team_ff_status", "{state}", Msg.color(state));
             plugin.msg().send(p, "team_ff_usage");
+            return true;
+        }
+
+        // Anything beyond status is a toggle/change attempt -> respect config
+        if (!plugin.isFriendlyFireToggleEnabled()) {
+            plugin.msg().send(p, "team_ff_toggle_disabled");
             return true;
         }
 

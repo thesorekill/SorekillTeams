@@ -221,7 +221,18 @@ public final class MenuRouter {
 
         // TEAMCHAT:TOGGLE
         if (a.equalsIgnoreCase("TEAMCHAT:TOGGLE")) {
+
+            // Respect config "toggle disabled" (matches your messages.yml keys)
+            if (!plugin.getConfig().getBoolean("team_chat.toggle_enabled", true)) {
+                plugin.msg().send(p, "teamchat_toggle_disabled");
+                return;
+            }
+
             plugin.teams().toggleTeamChat(p.getUniqueId());
+
+            boolean enabled = plugin.teams().isTeamChatEnabled(p.getUniqueId());
+            plugin.msg().send(p, enabled ? "teamchat_on" : "teamchat_off");
+
             open(p, "team_info", 0);
             return;
         }

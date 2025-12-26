@@ -219,6 +219,7 @@ team_ff_status_on: "{prefix}&aTeam friendly fire is now &fON&a."
 team_ff_status_off: "{prefix}&cTeam friendly fire is now &fOFF&c."
 team_ff_status: "{prefix}&7Team friendly fire: {state}"
 team_ff_usage: "{prefix}&7Usage: /team ff <on:off:toggle:status>"
+team_ff_toggle_disabled: "{prefix}&cTeam friendly-fire toggling is disabled by the server."
 
 # ----------------------------------------------------------------------------
 # Team - Team Online/Offline messages

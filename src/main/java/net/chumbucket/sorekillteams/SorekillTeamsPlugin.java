@@ -422,4 +422,11 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     // Team homes
     public TeamHomeService teamHomes() { return teamHomes; }
     public TeamHomeStorage teamHomeStorage() { return teamHomeStorage; }
+
+    // ----------------------------------------------------------------------------
+    // Friendly Fire config helpers
+    // ----------------------------------------------------------------------------
+    public boolean isFriendlyFireToggleEnabled() {
+        return getConfig().getBoolean("friendly_fire.toggle_enabled", true);
+    }
 }
