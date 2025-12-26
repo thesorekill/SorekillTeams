@@ -85,6 +85,12 @@ team_invite_only_one_team: "{prefix}&cThat player already has a pending invite f
 # ----------------------------------------------------------------------------
 team_created: "{prefix}&fYou created the team &8&l(&c&l{team}&8&l)&f!"
 
+# ✅ NEW: Create Team chat-flow prompts (uses {prefix})
+team_create_flow_prompt: "{prefix}&7Type your team name in chat."
+team_create_flow_cancel_hint: "{prefix}&7Type &cCancel&7 to stop."
+team_create_flow_cancelled: "{prefix}&7Cancelled."
+team_create_flow_failed: "{prefix}&cFailed to create team."
+
 # Primary key used by the service
 team_team_disbanded: "{prefix}&c{team} was disbanded."
 # Compatibility alias (safe to keep)
@@ -194,7 +200,7 @@ team_homes_entry: "{prefix}&f- &e{home} &8(&7{world}&8)"
 
 team_home_max_reached: "{prefix}&cYour team has reached the max homes limit (&f{max}&c)."
 
-team_home_cooldown: "{prefix}&cYour team must wait &f{seconds}&c seconds before teleporting again."
+team_home_cooldown: "{prefix}&cYou must wait &f{seconds}&c seconds before teleporting again."
 team_home_warmup: "{prefix}&7Teleporting in &f{seconds}&7 seconds..."
 team_home_teleported: "{prefix}&aTeleported to team home: &f{home}&a."
 team_home_cancelled_move: "{prefix}&cTeleportation cancelled, you moved."

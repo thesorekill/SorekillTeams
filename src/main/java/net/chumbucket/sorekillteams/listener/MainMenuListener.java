@@ -8,6 +8,7 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.ClickType;
 import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryCloseEvent;
 
 public final class MainMenuListener implements Listener {
 
@@ -30,7 +31,6 @@ public final class MainMenuListener implements Listener {
             return;
         }
 
-        // Cancel ALL menu interaction (so they can’t take items)
         e.setCancelled(true);
 
         int rawSlot = e.getRawSlot();
@@ -55,8 +55,15 @@ public final class MainMenuListener implements Listener {
         }
 
         if (close) {
-            // close one tick later so OPEN/COMMAND/FLOW can execute cleanly
             plugin.getServer().getScheduler().runTask(plugin, p::closeInventory);
+        }
+    }
+
+    @EventHandler
+    public void onClose(InventoryCloseEvent e) {
+        if (!(e.getPlayer() instanceof Player p)) return;
+        if (plugin.menuRouter() != null) {
+            plugin.menuRouter().stopCycling(p.getUniqueId());
         }
     }
 }

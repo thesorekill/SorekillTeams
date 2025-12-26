@@ -13,14 +13,16 @@ public final class MenuHolder implements InventoryHolder {
     private final String menuKey;
     private final Player viewer;
 
-    // slot -> left action string (e.g., "OPEN:main", "COMMAND:team accept X", etc.)
+    // slot -> left/right action
     private final Map<Integer, String> leftActionsBySlot = new HashMap<>();
-
-    // slot -> right action string (optional)
     private final Map<Integer, String> rightActionsBySlot = new HashMap<>();
 
     // slot -> close flag
     private final Map<Integer, Boolean> closeBySlot = new HashMap<>();
+
+    // per-menu state (paging + confirm context)
+    private int page = 0;
+    private final Map<String, String> ctx = new HashMap<>();
 
     private Inventory inv;
 
@@ -39,12 +41,23 @@ public final class MenuHolder implements InventoryHolder {
         return inv == null ? Bukkit.createInventory(this, 9) : inv;
     }
 
-    /** Backwards-compatible bind: sets only left action */
-    public void bind(int slot, String action, boolean close) {
-        bind(slot, action, null, close);
+    public void clearBinds() {
+        leftActionsBySlot.clear();
+        rightActionsBySlot.clear();
+        closeBySlot.clear();
+        ctx.clear();
     }
 
-    /** Full bind: sets left + right actions */
+    /** Bind single action (left+right same). */
+    public void bind(int slot, String action, boolean close) {
+        if (action != null) {
+            leftActionsBySlot.put(slot, action);
+            rightActionsBySlot.put(slot, action);
+        }
+        closeBySlot.put(slot, close);
+    }
+
+    /** Bind left/right actions separately. */
     public void bind(int slot, String leftAction, String rightAction, boolean close) {
         if (leftAction != null) leftActionsBySlot.put(slot, leftAction);
         if (rightAction != null) rightActionsBySlot.put(slot, rightAction);
@@ -55,4 +68,20 @@ public final class MenuHolder implements InventoryHolder {
     public String rightActionAt(int slot) { return rightActionsBySlot.get(slot); }
 
     public boolean closeAt(int slot) { return closeBySlot.getOrDefault(slot, false); }
+
+    // ---------- paging ----------
+    public int page() { return page; }
+    public void setPage(int page) { this.page = Math.max(0, page); }
+
+    // ---------- context ----------
+    public void ctxPut(String key, String value) {
+        if (key == null) return;
+        if (value == null) ctx.remove(key);
+        else ctx.put(key, value);
+    }
+
+    public String ctxGet(String key) {
+        if (key == null) return null;
+        return ctx.get(key);
+    }
 }

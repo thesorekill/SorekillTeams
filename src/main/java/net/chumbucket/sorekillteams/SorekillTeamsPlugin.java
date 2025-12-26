@@ -17,6 +17,7 @@ import net.chumbucket.sorekillteams.command.TeamCommandTabCompleter;
 import net.chumbucket.sorekillteams.listener.CreateTeamFlowListener;
 import net.chumbucket.sorekillteams.listener.FriendlyFireListener;
 import net.chumbucket.sorekillteams.listener.MainMenuListener;
+import net.chumbucket.sorekillteams.listener.MenuCloseListener;
 import net.chumbucket.sorekillteams.listener.TeamChatListener;
 import net.chumbucket.sorekillteams.listener.TeamOnlineStatusListener;
 import net.chumbucket.sorekillteams.menu.MenuRouter;
@@ -122,6 +123,7 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         // ✅ Menu listeners
         getServer().getPluginManager().registerEvents(new MainMenuListener(this), this);
         getServer().getPluginManager().registerEvents(new CreateTeamFlowListener(this), this);
+        getServer().getPluginManager().registerEvents(new MenuCloseListener(this), this);
 
         startInvitePurgeTask();
         startAutosaveTask();

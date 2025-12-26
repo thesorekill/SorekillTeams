@@ -1,13 +1,3 @@
-/*
- * Copyright © 2025 Sorekill
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- */
-
 package net.chumbucket.sorekillteams.util;
 
 import net.chumbucket.sorekillteams.SorekillTeamsPlugin;
@@ -42,16 +32,12 @@ public final class TeamNameValidator {
         if (raw.isEmpty()) return invalid("team_name_invalid");
 
         // -------- 1) Validate formatting codes --------
-        // Allow only:
-        // - &0-&9, &a-&f (colors)
-        // - optional &l (bold)
-        // - optional &r (reset)
-        // Explicitly block hex like &#RRGGBB
         boolean allowColors = plugin.getConfig().getBoolean("teams.name.allow_color_codes", true);
         boolean allowBold = plugin.getConfig().getBoolean("teams.name.allow_bold", true);
         boolean allowReset = plugin.getConfig().getBoolean("teams.name.allow_reset", true);
 
         if (allowColors) {
+            // block hex like &#RRGGBB
             if (raw.toLowerCase(Locale.ROOT).contains("&#")) {
                 return invalid("team_name_invalid");
             }
@@ -70,11 +56,10 @@ public final class TeamNameValidator {
                 if (!ok) return invalid("team_name_invalid");
             }
         } else {
-            // no formatting allowed at all
             if (raw.indexOf('&') >= 0) return invalid("team_name_invalid");
         }
 
-        // -------- 2) Plain name checks (length + allowed characters) --------
+        // -------- 2) Plain name checks --------
         String plain = stripAmpCodes(raw).trim();
         if (plain.isEmpty()) return invalid("team_name_invalid");
 
@@ -94,7 +79,6 @@ public final class TeamNameValidator {
             return invalid("team_name_reserved");
         }
 
-        // Keep raw for storage/display; caller can Msg.color(raw) when sending.
         return new Validation(true, "", raw, plain);
     }
 
@@ -112,15 +96,12 @@ public final class TeamNameValidator {
         allowedPlain = allowedPlain.trim();
         if (allowedPlain.isEmpty()) allowedPlain = "a-zA-Z0-9_";
 
-        // Prevent regex/charclass injection from config
-        // We allow typical charclass content: ranges a-z, A-Z, 0-9, underscore, dash, and backslash.
         allowedPlain = DISALLOWED_IN_CHARCLASS.matcher(allowedPlain).replaceAll("");
 
         try {
             return Pattern.compile("^[" + allowedPlain + "]+$");
         } catch (Exception ignored) {
-            // If config is still malformed somehow, fail open to avoid breaking commands
-            return null;
+            return null; // fail-open
         }
     }
 
@@ -151,7 +132,10 @@ public final class TeamNameValidator {
         if (a == null || b == null) return false;
         if (a.isBlank() || b.isBlank()) return false;
 
+        // exact
         if (a.equalsIgnoreCase(b)) return true;
+
+        // contains (kept, since you already wanted “close”)
         if (a.contains(b) || b.contains(a)) return true;
 
         int maxDist = Math.max(0, plugin.getConfig().getInt("teams.reserved_match.levenshtein_distance", 2));
@@ -195,33 +179,24 @@ public final class TeamNameValidator {
     }
 
     /**
-     * Optional LuckPerms compatibility without compile-time dependency.
-     * Pulls loaded group names from the LuckPerms API via Bukkit ServicesManager.
-     *
-     * Note: loaded groups are not guaranteed to include ALL groups unless LP has loaded them.
-     * Still useful for catching obvious collisions on active servers.
+     * LuckPerms compatibility via reflection with LuckPermsProvider.get().
+     * Much more reliable than ServicesManager registration in practice.
      */
     private static final class LuckPermsCompat {
         private static final String LP_PLUGIN_NAME = "LuckPerms";
-        private static final String LP_API_CLASS = "net.luckperms.api.LuckPerms";
+        private static final String LP_PROVIDER_CLASS = "net.luckperms.api.LuckPermsProvider";
 
         static Set<String> tryGetGroupNames() {
             try {
                 if (Bukkit.getPluginManager().getPlugin(LP_PLUGIN_NAME) == null) return Set.of();
 
-                Class<?> luckPermsClass = Class.forName(LP_API_CLASS);
+                Class<?> providerClass = Class.forName(LP_PROVIDER_CLASS);
 
-                Object services = Bukkit.getServicesManager();
-                Object reg = services.getClass()
-                        .getMethod("getRegistration", Class.class)
-                        .invoke(services, luckPermsClass);
+                // LuckPerms api = LuckPermsProvider.get();
+                Object api = providerClass.getMethod("get").invoke(null);
+                if (api == null) return Set.of();
 
-                if (reg == null) return Set.of();
-
-                Object provider = reg.getClass().getMethod("getProvider").invoke(reg);
-                if (provider == null) return Set.of();
-
-                Object groupManager = provider.getClass().getMethod("getGroupManager").invoke(provider);
+                Object groupManager = api.getClass().getMethod("getGroupManager").invoke(api);
                 if (groupManager == null) return Set.of();
 
                 Object groups = groupManager.getClass().getMethod("getLoadedGroups").invoke(groupManager);

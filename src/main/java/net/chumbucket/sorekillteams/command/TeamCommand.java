@@ -1,13 +1,3 @@
-/*
- * Copyright © 2025 Sorekill
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- */
-
 package net.chumbucket.sorekillteams.command;
 
 import net.chumbucket.sorekillteams.SorekillTeamsPlugin;
@@ -75,15 +65,22 @@ public final class TeamCommand implements CommandExecutor {
             return true;
         }
 
-        // Menus routing (config-controlled)
         final boolean menusEnabled = plugin.getConfig().getBoolean("menus.enabled", true);
         final boolean openOnNoArgs = plugin.getConfig().getBoolean("menus.open_on_team_command_no_args", true);
 
+        // ✅ NEW: /team with no args opens team info if you're in a team
         if (args.length == 0) {
-            if (menusEnabled && openOnNoArgs && plugin.menus() != null && plugin.menuRouter() != null) {
-                plugin.menuRouter().open(p, "main");
+            if (menusEnabled && openOnNoArgs && plugin.menuRouter() != null) {
+                boolean inTeam = plugin.teams().getTeamByPlayer(p.getUniqueId()).isPresent();
+
+                if (inTeam) {
+                    plugin.menuRouter().open(p, "team_info");
+                } else {
+                    plugin.menuRouter().open(p, "main");
+                }
                 return true;
             }
+
             plugin.msg().send(p, "team_usage");
             return true;
         }

@@ -181,6 +181,9 @@ friendly_fire:
   # - false => plugin ENFORCES teammate rules (block/scale below)
   enabled: false
 
+  # If true, players can toggle "friendly fire" for their team.
+  toggle_enabled: true
+
   # When enabled=false and attacker+victim are teammates AND that team's FF is OFF:
   # How much damage should go through (0-100)?
   # - 0     = fully block teammate damage (classic no-friendly-fire)

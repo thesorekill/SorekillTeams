@@ -1,7 +1,5 @@
 menus:
-  # ----------------------------
-  # /team (Main)
-  # ----------------------------
+
   main:
     title: "&8ᴛᴇᴀᴍꜱ"
     rows: 3
@@ -12,11 +10,9 @@ menus:
       name: " "
 
     items:
-      # Slot 11: Dynamic "Team / Create" button
       team_or_create:
         slot: 11
 
-        # What it looks like if player is NOT in a team
         when_not_in_team:
           material: LIME_CONCRETE
           name: "&aCreate a Team"
@@ -24,10 +20,9 @@ menus:
             - "&7You are not in a team."
             - ""
             - "&eClick to create one"
-          action: "FLOW:CREATE_TEAM"   # (we’ll implement this as a chat-input flow)
+          action: "FLOW:CREATE_TEAM"
           close: true
 
-        # What it looks like if player IS in a team
         when_in_team:
           material: BOOK
           name: "&bYour Team: &f{team}"
@@ -37,9 +32,8 @@ menus:
             - ""
             - "&eClick to view team info"
           action: "OPEN:team_info"
-          close: true
+          close: false
 
-      # Slot 13: Invites button
       invites:
         slot: 13
         material: PAPER
@@ -49,9 +43,8 @@ menus:
           - ""
           - "&eClick to view invites"
         action: "OPEN:invites"
-        close: true
+        close: false
 
-      # Slot 15: Browse other teams
       browse_teams:
         slot: 15
         material: COMPASS
@@ -61,14 +54,11 @@ menus:
           - ""
           - "&eClick to browse"
         action: "OPEN:browse_teams"
-        close: true
+        close: false
 
 
-  # ----------------------------
-  # Team Info menu
-  # ----------------------------
   team_info:
-    title: "&8ᴛᴇᴀᴍ ɪɴꜰᴏ"
+    title: "&8ᴛᴇᴀᴍ ɪɴꜰᴏ - &c&l{team}"
     rows: 3
 
     filler:
@@ -77,22 +67,180 @@ menus:
       name: " "
 
     items:
-      header:
-        slot: 13
+      name_tag:
+        slot: 11
         material: NAME_TAG
         name: "&b{team}"
         lore:
           - "&7Owner: &f{owner}"
           - "&7Members: &f{members}"
+          - ""
           - "&7Friendly Fire: {ff}"
           - "&7Team Chat: {chat}"
-        action: "NONE"
+          - ""
+          - "&e(Owner) Click to disband"
+          - "&e(Member) Click to leave"
+        action: "TEAM:DISBAND_CONFIRM"
+        close: false
+
+      team_chat:
+        slot: 12
+        material: NETHERITE_SWORD
+        name: "&bTeam Chat"
+        lore:
+          - "&7Status: {chat}"
+          - ""
+          - "&eClick to toggle"
+        action: "TEAMCHAT:TOGGLE"
+        close: false
+
+      members_head:
+        slot: 13
+        material: PLAYER_HEAD
+        name: "&bMembers"
+        lore:
+          - "&7Click to view members"
+        action: "OPEN:team_members"
+        close: false
+
+      team_home:
+        slot: 14
+
+        when_none:
+          material: LIGHT_GRAY_BED
+          name: "&7Team Home"
+          lore:
+            - "&7The owner hasn't set a home."
+            - ""
+            - "&e(Owner) Click to set home"
+          action_owner: "TEAMHOME:SET"
+          action_member: "NONE"
+          close: false
+
+        when_one:
+          material: RED_BED
+          name: "&cTeam Home"
+          lore:
+            - "&7Teleport to the team home."
+            - ""
+            - "&eClick to teleport"
+          action: "TEAMHOME:TELEPORT_ONE"
+          close: true
+
+        when_many:
+          material: RED_BED
+          name: "&cTeam Homes"
+          lore:
+            - "&7Multiple homes available."
+            - ""
+            - "&eClick to choose"
+          action: "OPEN:team_homes"
+          close: false
+
+      friendly_fire:
+        slot: 15
+        material: SHIELD
+        name: "&bFriendly Fire"
+        lore:
+          - "&7Status: {ff}"
+          - ""
+          - "&e(Owner) Click to toggle"
+        action: "FF:TOGGLE"
         close: false
 
 
-  # ----------------------------
-  # Invites menu
-  # ----------------------------
+  team_members:
+    title: "&8ᴍᴇᴍʙᴇʀꜱ"
+    rows: 4
+
+    filler:
+      enabled: false
+      material: GRAY_STAINED_GLASS_PANE
+      name: " "
+
+    list:
+      type: TEAM_MEMBERS
+      slots: [10,11,12,13,14,15,16,19,20,21,22,23,24,25]
+
+      item:
+        material: PLAYER_HEAD
+        name: "&b{member_name}"
+        lore:
+          - "&7Role: &f{member_role}"
+          - ""
+          - "&e(Owner) Click to kick"
+      click: "CONFIRM:kick_member:{member_uuid}"
+      close_on_click: false
+
+    pagination:
+      enabled: true
+      per_page: 14
+      hide_if_single_page: true
+
+      prev:
+        slot: 18
+        material: ARROW
+        name: "&c← Prev"
+        lore:
+          - "&7Page &f{page}&7/&f{pages}"
+        action: "PAGE:PREV"
+        close: false
+
+      next:
+        slot: 26
+        material: ARROW
+        name: "&aNext →"
+        lore:
+          - "&7Page &f{page}&7/&f{pages}"
+        action: "PAGE:NEXT"
+        close: false
+
+
+  team_homes:
+    title: "&8ᴛᴇᴀᴍ ʜᴏᴍᴇꜱ"
+    rows: 4
+
+    filler:
+      enabled: false
+      material: GRAY_STAINED_GLASS_PANE
+      name: " "
+
+    list:
+      type: TEAM_HOMES
+      slots: [10,11,12,13,14,15,16,19,20,21,22,23,24,25]
+
+      item:
+        material: RED_BED
+        name: "&c{home_name}"
+        lore:
+          - "&7Click to teleport"
+      click: "TEAMHOME:TELEPORT:{home_name}"
+      close_on_click: true
+
+    pagination:
+      enabled: true
+      per_page: 14
+      hide_if_single_page: true
+
+      prev:
+        slot: 18
+        material: ARROW
+        name: "&c← Prev"
+        lore:
+          - "&7Page &f{page}&7/&f{pages}"
+        action: "PAGE:PREV"
+        close: false
+
+      next:
+        slot: 26
+        material: ARROW
+        name: "&aNext →"
+        lore:
+          - "&7Page &f{page}&7/&f{pages}"
+        action: "PAGE:NEXT"
+        close: false
+
+
   invites:
     title: "&8ɪɴᴠɪᴛᴇꜱ"
     rows: 4
@@ -102,11 +250,10 @@ menus:
       material: GRAY_STAINED_GLASS_PANE
       name: " "
 
-    # Dynamic list (we’ll implement): display each invite as an item
     list:
       type: INVITES
-      start_slot: 10
       slots: [10,11,12,13,14,15,16,19,20,21,22,23,24,25]
+
       item:
         material: PAPER
         name: "&b{invite_team}"
@@ -114,16 +261,35 @@ menus:
           - "&7From: &f{invite_owner}"
           - "&7Expires: &f{invite_expires}"
           - ""
-          - "&eLeft-click: &aAccept"
-          - "&eRight-click: &cDeny"
-      left_click: "COMMAND:team accept {invite_team_id}"
-      right_click: "COMMAND:team deny {invite_team_id}"
-      close_on_click: true
+          - "&eClick to respond"
+
+      click: "CONFIRM:invite:{invite_team_id}"
+      close_on_click: false
+
+    pagination:
+      enabled: true
+      per_page: 14
+      hide_if_single_page: true
+
+      prev:
+        slot: 18
+        material: ARROW
+        name: "&c← Prev"
+        lore:
+          - "&7Page &f{page}&7/&f{pages}"
+        action: "PAGE:PREV"
+        close: false
+
+      next:
+        slot: 26
+        material: ARROW
+        name: "&aNext →"
+        lore:
+          - "&7Page &f{page}&7/&f{pages}"
+        action: "PAGE:NEXT"
+        close: false
 
 
-  # ----------------------------
-  # Browse Teams menu (placeholder v1)
-  # ----------------------------
   browse_teams:
     title: "&8ʙʀᴏᴡꜱᴇ ᴛᴇᴀᴍꜱ"
     rows: 4
@@ -133,11 +299,10 @@ menus:
       material: GRAY_STAINED_GLASS_PANE
       name: " "
 
-    # Dynamic list (we’ll implement): show each existing team
     list:
       type: TEAMS
-      start_slot: 10
       slots: [10,11,12,13,14,15,16,19,20,21,22,23,24,25]
+
       item:
         material: PLAYER_HEAD
         name: "&b{team}"
@@ -145,6 +310,94 @@ menus:
           - "&7Owner: &f{owner}"
           - "&7Members: &f{members}"
           - ""
-          - "&7(Coming soon: request invite)"
-      left_click: "NONE"
+          - "&eClick to view info"
+
+      click: "OPEN:team_view:{team_id}"
       close_on_click: false
+
+    pagination:
+      enabled: true
+      per_page: 14
+      hide_if_single_page: true
+
+      prev:
+        slot: 18
+        material: ARROW
+        name: "&c← Prev"
+        lore:
+          - "&7Page &f{page}&7/&f{pages}"
+        action: "PAGE:PREV"
+        close: false
+
+      next:
+        slot: 26
+        material: ARROW
+        name: "&aNext →"
+        lore:
+          - "&7Page &f{page}&7/&f{pages}"
+        action: "PAGE:NEXT"
+        close: false
+
+
+  confirm:
+    rows: 3
+
+    filler:
+      enabled: true
+      material: GRAY_STAINED_GLASS_PANE
+      name: " "
+
+    layout:
+      deny_slot: 10
+      subject_slot: 13
+      accept_slot: 16
+
+    buttons:
+      deny:
+        material: RED_STAINED_GLASS_PANE
+        name: "&cCANCEL"
+        lore:
+          - "&7Click to cancel"
+        action: "{confirm_action_deny}"
+        close: true
+
+      accept:
+        material: LIME_STAINED_GLASS_PANE
+        name: "&aCONFIRM"
+        lore:
+          - "&7Click to confirm"
+        action: "{confirm_action_accept}"
+        close: true
+
+      subject:
+        fallback_material: PLAYER_HEAD
+        name: "&b{subject}"
+        lore:
+          - "&7{subtitle}"
+        action: "NONE"
+        close: false
+
+    variants:
+      invite:
+        title: "&8ᴄᴏɴꜰɪʀᴍ ɪɴᴠɪᴛᴇ"
+        subtitle: "Invited by: &f{inviter}"
+        default_accept_action: "NONE"
+        default_deny_action: "OPEN:invites"
+
+      leave:
+        title: "&8ᴄᴏɴꜰɪʀᴍ ʟᴇᴀᴠᴇ"
+        subtitle: "Leave this team?"
+        default_accept_action: "COMMAND:team leave"
+        default_deny_action: "OPEN:team_info"
+
+      kick_member:
+        title: "&8ᴄᴏɴꜰɪʀᴍ ᴋɪᴄᴋ"
+        subtitle: "Kick: &f{member}"
+        default_accept_action: "NONE"
+        default_deny_action: "OPEN:team_members"
+
+      disband:
+        title: "&8ᴄᴏɴꜰɪʀᴍ ᴅɪꜱʙᴀɴᴅ"
+        subtitle: "Disband this team?"
+        default_accept_action: "COMMAND:team disband"
+        default_deny_action: "OPEN:team_info"
