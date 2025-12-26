@@ -14,8 +14,12 @@ import net.chumbucket.sorekillteams.command.AdminCommand;
 import net.chumbucket.sorekillteams.command.TeamChatCommand;
 import net.chumbucket.sorekillteams.command.TeamCommand;
 import net.chumbucket.sorekillteams.command.TeamCommandTabCompleter;
+import net.chumbucket.sorekillteams.listener.CreateTeamFlowListener;
 import net.chumbucket.sorekillteams.listener.FriendlyFireListener;
+import net.chumbucket.sorekillteams.listener.MainMenuListener;
 import net.chumbucket.sorekillteams.listener.TeamChatListener;
+import net.chumbucket.sorekillteams.listener.TeamOnlineStatusListener;
+import net.chumbucket.sorekillteams.menu.MenuRouter;
 import net.chumbucket.sorekillteams.model.TeamInvites;
 import net.chumbucket.sorekillteams.service.SimpleTeamHomeService;
 import net.chumbucket.sorekillteams.service.SimpleTeamService;
@@ -27,9 +31,10 @@ import net.chumbucket.sorekillteams.storage.YamlTeamHomeStorage;
 import net.chumbucket.sorekillteams.storage.YamlTeamStorage;
 import net.chumbucket.sorekillteams.update.UpdateChecker;
 import net.chumbucket.sorekillteams.update.UpdateNotifyListener;
-import net.chumbucket.sorekillteams.util.Debug;
-import net.chumbucket.sorekillteams.util.Msg;
 import net.chumbucket.sorekillteams.util.Actionbar;
+import net.chumbucket.sorekillteams.util.Debug;
+import net.chumbucket.sorekillteams.util.Menus;
+import net.chumbucket.sorekillteams.util.Msg;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.PluginCommand;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -40,8 +45,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class SorekillTeamsPlugin extends JavaPlugin {
 
     private Msg msg;
+    private Menus menus; // menus.yml loader
     private Actionbar actionbar;
     private Debug debug;
+
+    // ✅ NEW: GUI router/executor
+    private MenuRouter menuRouter;
 
     private TeamStorage storage;
     private TeamService teams;
@@ -65,11 +74,18 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     @Override
     public void onEnable() {
         saveDefaultConfig();
+
+        // ensure resources exist
         saveResourceIfMissing(getMessagesFileNameSafe());
+        saveResourceIfMissing(getMenusFileNameSafe());
 
         this.msg = new Msg(this);
+        this.menus = new Menus(this);
         this.actionbar = new Actionbar(this);
         this.debug = new Debug(this);
+
+        // ✅ NEW
+        this.menuRouter = new MenuRouter(this);
 
         this.storage = new YamlTeamStorage(this);
         this.teams = new SimpleTeamService(this, storage);
@@ -98,9 +114,14 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         // Tab completion
         registerTabCompleter("team", new TeamCommandTabCompleter(this));
 
-        // Listeners
+        // Listeners (core)
         getServer().getPluginManager().registerEvents(new FriendlyFireListener(this), this);
         getServer().getPluginManager().registerEvents(new TeamChatListener(this), this);
+        getServer().getPluginManager().registerEvents(new TeamOnlineStatusListener(this), this);
+
+        // ✅ Menu listeners
+        getServer().getPluginManager().registerEvents(new MainMenuListener(this), this);
+        getServer().getPluginManager().registerEvents(new CreateTeamFlowListener(this), this);
 
         startInvitePurgeTask();
         startAutosaveTask();
@@ -126,7 +147,10 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
     public void reloadEverything() {
         reloadConfig();
+
+        // ensure resources exist (in case user deleted)
         saveResourceIfMissing(getMessagesFileNameSafe());
+        saveResourceIfMissing(getMenusFileNameSafe());
 
         if (msg != null) {
             try {
@@ -135,6 +159,19 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
                 getLogger().warning("Failed to reload messages: " + e.getClass().getSimpleName() + ": " + e.getMessage());
             }
         }
+
+        if (menus != null) {
+            try {
+                menus.reload();
+            } catch (Exception e) {
+                getLogger().warning("Failed to reload menus.yml: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+            }
+        } else {
+            menus = new Menus(this);
+        }
+
+        // ✅ ensure router exists after reload
+        if (menuRouter == null) menuRouter = new MenuRouter(this);
 
         // Reload teams (best-effort; keep old if reload fails)
         try {
@@ -182,15 +219,10 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
         // service
         if (teamHomes == null || !isStartup) {
-            // If you want reload to hard-reset in-memory state, rebuild it:
             teamHomes = buildTeamHomeService();
         }
     }
 
-    /**
-     * Central place to construct the home service.
-     * If your SimpleTeamHomeService has a different constructor, change it here.
-     */
     private TeamHomeService buildTeamHomeService() {
         return new SimpleTeamHomeService();
     }
@@ -248,6 +280,15 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             v = getConfig().getString("files.messages", "messages.yml");
         } catch (Exception ignored) {}
         if (v == null || v.isBlank()) return "messages.yml";
+        return v.trim();
+    }
+
+    private String getMenusFileNameSafe() {
+        String v = null;
+        try {
+            v = getConfig().getString("files.menus", "menus.yml");
+        } catch (Exception ignored) {}
+        if (v == null || v.isBlank()) return "menus.yml";
         return v.trim();
     }
 
@@ -359,10 +400,15 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     // =========================
 
     public String getMessagesFileName() { return getMessagesFileNameSafe(); }
+    public String getMenusFileName() { return getMenusFileNameSafe(); }
 
     public Msg msg() { return msg; }
+    public Menus menus() { return menus; }
     public Actionbar actionbar() { return actionbar; }
     public Debug debug() { return debug; }
+
+    // ✅ NEW
+    public MenuRouter menuRouter() { return menuRouter; }
 
     public TeamService teams() { return teams; }
     public TeamStorage storage() { return storage; }

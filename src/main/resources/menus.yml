@@ -1,0 +1,150 @@
+menus:
+  # ----------------------------
+  # /team (Main)
+  # ----------------------------
+  main:
+    title: "&8ᴛᴇᴀᴍꜱ"
+    rows: 3
+
+    filler:
+      enabled: false
+      material: GRAY_STAINED_GLASS_PANE
+      name: " "
+
+    items:
+      # Slot 11: Dynamic "Team / Create" button
+      team_or_create:
+        slot: 11
+
+        # What it looks like if player is NOT in a team
+        when_not_in_team:
+          material: LIME_CONCRETE
+          name: "&aCreate a Team"
+          lore:
+            - "&7You are not in a team."
+            - ""
+            - "&eClick to create one"
+          action: "FLOW:CREATE_TEAM"   # (we’ll implement this as a chat-input flow)
+          close: true
+
+        # What it looks like if player IS in a team
+        when_in_team:
+          material: BOOK
+          name: "&bYour Team: &f{team}"
+          lore:
+            - "&7Owner: &f{owner}"
+            - "&7Members: &f{members}"
+            - ""
+            - "&eClick to view team info"
+          action: "OPEN:team_info"
+          close: true
+
+      # Slot 13: Invites button
+      invites:
+        slot: 13
+        material: PAPER
+        name: "&bInvites"
+        lore:
+          - "&7Pending: &f{invite_count}"
+          - ""
+          - "&eClick to view invites"
+        action: "OPEN:invites"
+        close: true
+
+      # Slot 15: Browse other teams
+      browse_teams:
+        slot: 15
+        material: COMPASS
+        name: "&bBrowse Teams"
+        lore:
+          - "&7View other teams on the server"
+          - ""
+          - "&eClick to browse"
+        action: "OPEN:browse_teams"
+        close: true
+
+
+  # ----------------------------
+  # Team Info menu
+  # ----------------------------
+  team_info:
+    title: "&8ᴛᴇᴀᴍ ɪɴꜰᴏ"
+    rows: 3
+
+    filler:
+      enabled: false
+      material: GRAY_STAINED_GLASS_PANE
+      name: " "
+
+    items:
+      header:
+        slot: 13
+        material: NAME_TAG
+        name: "&b{team}"
+        lore:
+          - "&7Owner: &f{owner}"
+          - "&7Members: &f{members}"
+          - "&7Friendly Fire: {ff}"
+          - "&7Team Chat: {chat}"
+        action: "NONE"
+        close: false
+
+
+  # ----------------------------
+  # Invites menu
+  # ----------------------------
+  invites:
+    title: "&8ɪɴᴠɪᴛᴇꜱ"
+    rows: 4
+
+    filler:
+      enabled: false
+      material: GRAY_STAINED_GLASS_PANE
+      name: " "
+
+    # Dynamic list (we’ll implement): display each invite as an item
+    list:
+      type: INVITES
+      start_slot: 10
+      slots: [10,11,12,13,14,15,16,19,20,21,22,23,24,25]
+      item:
+        material: PAPER
+        name: "&b{invite_team}"
+        lore:
+          - "&7From: &f{invite_owner}"
+          - "&7Expires: &f{invite_expires}"
+          - ""
+          - "&eLeft-click: &aAccept"
+          - "&eRight-click: &cDeny"
+      left_click: "COMMAND:team accept {invite_team_id}"
+      right_click: "COMMAND:team deny {invite_team_id}"
+      close_on_click: true
+
+
+  # ----------------------------
+  # Browse Teams menu (placeholder v1)
+  # ----------------------------
+  browse_teams:
+    title: "&8ʙʀᴏᴡꜱᴇ ᴛᴇᴀᴍꜱ"
+    rows: 4
+
+    filler:
+      enabled: false
+      material: GRAY_STAINED_GLASS_PANE
+      name: " "
+
+    # Dynamic list (we’ll implement): show each existing team
+    list:
+      type: TEAMS
+      start_slot: 10
+      slots: [10,11,12,13,14,15,16,19,20,21,22,23,24,25]
+      item:
+        material: PLAYER_HEAD
+        name: "&b{team}"
+        lore:
+          - "&7Owner: &f{owner}"
+          - "&7Members: &f{members}"
+          - ""
+          - "&7(Coming soon: request invite)"
+      left_click: "NONE"
+      close_on_click: false

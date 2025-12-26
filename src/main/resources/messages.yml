@@ -215,6 +215,12 @@ team_ff_status: "{prefix}&7Team friendly fire: {state}"
 team_ff_usage: "{prefix}&7Usage: /team ff <on:off:toggle:status>"
 
 # ----------------------------------------------------------------------------
+# Team - Team Online/Offline messages
+# ----------------------------------------------------------------------------
+team_member_online: "{prefix}&8[&b{team}&8] &a{player} &7is now &aonline&7."
+team_member_offline: "{prefix}&8[&b{team}&8] &c{player} &7is now &coffline&7."
+
+# ----------------------------------------------------------------------------
 # Update Checker
 # ----------------------------------------------------------------------------
 update_checking: "{prefix}&7Checking for updates..."

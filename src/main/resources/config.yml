@@ -89,7 +89,19 @@ teams:
   reserved_match:
     levenshtein_distance: 2
 
+# ----------------------------------------------------------------------------
+# Team Menus (Every menu is configurable in menus.yml)
+# ----------------------------------------------------------------------------
+menus:
+  # Master switch for all GUI menus
+  enabled: true
 
+  # If true, running "/team" with no arguments opens the team menu
+  # (Commands like "/team info", "/team invite", etc. are unaffected)
+  open_on_team_command_no_args: true
+
+  # If true, registers "/team menu" as a shortcut to open the GUI
+  enable_team_menu_subcommand: true
 # ----------------------------------------------------------------------------
 # Invites
 # ----------------------------------------------------------------------------
@@ -246,3 +258,4 @@ integrations:
 files:
   # The file loaded by Msg.java for messages (prefix + message keys)
   messages: "messages.yml"
+  menus: "menus.yml"
