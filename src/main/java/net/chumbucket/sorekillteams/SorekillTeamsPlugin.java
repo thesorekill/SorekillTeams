@@ -87,6 +87,9 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     private int invitePurgeTaskId = -1;
     private int autosaveTaskId = -1;
 
+    // ✅ NEW: periodic SQL refresh
+    private int sqlRefreshTaskId = -1;
+
     private final AtomicBoolean saveInFlight = new AtomicBoolean(false);
 
     private boolean placeholdersHooked = false;
@@ -152,6 +155,9 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         startInvitePurgeTask();
         startAutosaveTask();
 
+        // ✅ NEW: start periodic SQL refresh (does nothing in YAML mode)
+        startSqlAutoRefreshTask();
+
         syncUpdateCheckerWithConfig();
 
         getLogger().info("SorekillTeams enabled. Storage=" + storageTypeActive);
@@ -164,6 +170,9 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
         stopTask(autosaveTaskId);
         autosaveTaskId = -1;
+
+        // ✅ NEW
+        stopSqlAutoRefreshTask();
 
         trySaveNowSync("shutdown");
 
@@ -223,6 +232,9 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
         startInvitePurgeTask();
         startAutosaveTask();
+
+        // ✅ NEW: restart SQL periodic refresh after reload (handles switching yaml<->sql)
+        startSqlAutoRefreshTask();
 
         syncUpdateCheckerWithConfig();
 
@@ -358,6 +370,9 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             this.teams = new SimpleTeamService(this, storage);
             this.storageTypeActive = "yaml";
             this.sqlDialect = null;
+
+            // ✅ if switching to yaml, stop the periodic sql refresh
+            stopSqlAutoRefreshTask();
             return;
         }
 
@@ -390,6 +405,9 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         this.storage = new SqlTeamStorage(db);
         this.teams = new SimpleTeamService(this, storage);
         this.storageTypeActive = type;
+
+        // ✅ if switching to sql, (re)start periodic sql refresh
+        startSqlAutoRefreshTask();
     }
 
     private void stopSql() {
@@ -503,9 +521,20 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         if (now - last < ttlMs) return;
         lastSqlMembershipCheckMs.put(playerUuid, now);
 
+        // ✅ Capture what we currently believe (main thread)
+        UUID cachedTeamId = simple.getTeamByPlayer(playerUuid).map(Team::getId).orElse(null);
+        String cachedTeamName = simple.getTeamByPlayer(playerUuid).map(Team::getName).orElse("Team");
+
         getServer().getScheduler().runTaskAsynchronously(this, () -> {
             UUID sqlTeamId = null;
             Team loadedTeam = null;
+
+            // If SQL says "no team", we still need to determine:
+            // - was the team disbanded? (team row missing)
+            // - or was player kicked/removed? (team still exists)
+            boolean oldTeamStillExistsInSql = false;
+            String oldTeamNameFromSql = null;
+            UUID oldTeamOwnerFromSql = null;
 
             try {
                 sqlTeamId = sqlStorage.findTeamIdForMember(playerUuid);
@@ -514,6 +543,17 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
                     loadedTeam = sqlStorage.loadTeamById(sqlTeamId);
                     if (loadedTeam == null) sqlTeamId = null;
                 }
+
+                // ✅ If player lost membership, check whether their OLD team still exists in SQL
+                if (sqlTeamId == null && cachedTeamId != null) {
+                    Team old = sqlStorage.loadTeamById(cachedTeamId);
+                    if (old != null) {
+                        oldTeamStillExistsInSql = true;
+                        oldTeamNameFromSql = old.getName();
+                        oldTeamOwnerFromSql = old.getOwner();
+                    }
+                }
+
             } catch (Exception e) {
                 getLogger().warning("SQL membership refresh failed for " + playerUuid + ": " +
                         e.getClass().getSimpleName() + ": " + e.getMessage());
@@ -523,25 +563,44 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             UUID finalSqlTeamId = sqlTeamId;
             Team finalLoadedTeam = loadedTeam;
 
+            boolean finalOldTeamStillExistsInSql = oldTeamStillExistsInSql;
+            String finalOldTeamNameFromSql = oldTeamNameFromSql;
+            UUID finalOldTeamOwnerFromSql = oldTeamOwnerFromSql;
+
             getServer().getScheduler().runTask(this, () -> {
-                UUID currentCachedTeamId = simple.getTeamByPlayer(playerUuid).map(Team::getId).orElse(null);
-                if (Objects.equals(currentCachedTeamId, finalSqlTeamId)) return;
+                UUID currentCached = simple.getTeamByPlayer(playerUuid).map(Team::getId).orElse(null);
+
+                // If we're already in sync, do nothing.
+                if (Objects.equals(currentCached, finalSqlTeamId)) return;
 
                 // ✅ SQL says: player has NO team
                 if (finalSqlTeamId == null) {
 
-                    // If we previously thought they had a team, decide if this looks like a DISBAND:
-                    // - if team still exists in our snapshot => likely kick/leave (no disband message)
-                    // - if team is gone => disband happened elsewhere => notify if online
-                    if (currentCachedTeamId != null) {
-                        boolean teamStillExists = simple.getTeamById(currentCachedTeamId).isPresent();
+                    // If they previously had a team, decide if this is DISBAND vs KICK/REMOVAL
+                    if (currentCached != null) {
+                        Player online = Bukkit.getPlayer(playerUuid);
+                        if (online != null) {
+                            if (finalOldTeamStillExistsInSql) {
+                                // Team still exists -> very likely kicked/removed
+                                String teamName = (finalOldTeamNameFromSql != null && !finalOldTeamNameFromSql.isBlank())
+                                        ? finalOldTeamNameFromSql
+                                        : cachedTeamName;
 
-                        if (!teamStillExists) {
-                            Player online = Bukkit.getPlayer(playerUuid);
-                            if (online != null) {
-                                // Team is gone from snapshot, so we may not have the name here.
-                                // This message key should read fine without {team} too.
-                                msg().send(online, "team_team_disbanded");
+                                String byName = "unknown";
+                                if (finalOldTeamOwnerFromSql != null) {
+                                    byName = simple.nameOf(finalOldTeamOwnerFromSql);
+                                }
+
+                                // Reuse your existing message key (expects {team} and {by})
+                                msg().send(online, "team_kick_target",
+                                        "{team}", Msg.color(teamName),
+                                        "{by}", byName
+                                );
+                            } else {
+                                // Team is gone in SQL -> disband
+                                msg().send(online, "team_team_disbanded",
+                                        "{team}", Msg.color(cachedTeamName)
+                                );
                             }
                         }
                     }
@@ -563,6 +622,40 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     public void ensureTeamFreshFromSql(Player player) {
         if (player == null) return;
         ensureTeamFreshFromSql(player.getUniqueId());
+    }
+
+    // =========================================================
+    // ✅ NEW: periodic SQL refresh task
+    // =========================================================
+
+    public void startSqlAutoRefreshTask() {
+        // Always stop any existing one first (covers reload)
+        stopSqlAutoRefreshTask();
+
+        if ("yaml".equalsIgnoreCase(storageTypeActive)) return;
+
+        long periodTicks = Math.max(20L, getConfig().getLong("storage.sql_auto_refresh_period_ticks", 40L)); // default 2s
+
+        sqlRefreshTaskId = getServer().getScheduler().runTaskTimer(this, () -> {
+            try {
+                // 1) Global snapshot refresh (browse lists / team existence)
+                ensureTeamsSnapshotFreshFromSql();
+
+                // 2) Membership refresh for online players (kicks/disbands show up without commands)
+                for (Player p : Bukkit.getOnlinePlayers()) {
+                    if (p == null) continue;
+                    ensureTeamFreshFromSql(p.getUniqueId());
+                }
+            } catch (Throwable t) {
+                getLogger().warning("SQL auto-refresh task error: " + t.getClass().getSimpleName() + ": " + t.getMessage());
+            }
+        }, periodTicks, periodTicks).getTaskId();
+    }
+
+    public void stopSqlAutoRefreshTask() {
+        if (sqlRefreshTaskId < 0) return;
+        stopTask(sqlRefreshTaskId);
+        sqlRefreshTaskId = -1;
     }
 
     // =========================================================
@@ -613,7 +706,7 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     private String getMenusFileNameSafe() {
         String v = null;
         try { v = getConfig().getString("files.menus", "menus.yml"); }
-       catch (Exception ignored) {}
+        catch (Exception ignored) {}
         return (v == null || v.isBlank()) ? "menus.yml" : v.trim();
     }
 
