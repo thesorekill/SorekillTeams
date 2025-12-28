@@ -27,7 +27,7 @@ menus:
           material: BOOK
           name: "&bYour Team: &f{team}"
           lore:
-            - "&7Owner: &f{owner}"
+            - "&7Team Owner: &f{owner}"
             - "&7Members: &f{members}"
             - ""
             - "&eClick to view team info"
@@ -72,13 +72,13 @@ menus:
         material: NAME_TAG
         name: "&b{team}"
         lore:
-          - "&7Owner: &f{owner}"
+          - "&7Team Owner: &f{owner}"
           - "&7Members: &f{members}"
           - ""
           - "&7Friendly Fire: {ff}"
           - "&7Team Chat: {chat}"
           - ""
-          - "&e(Owner) Click to disband"
+          - "&e(Team Owner) Click to disband"
           - "&e(Member) Click to leave"
         action: "TEAM:DISBAND_CONFIRM"
         close: false
@@ -97,9 +97,9 @@ menus:
       members_head:
         slot: 13
         material: PLAYER_HEAD
-        name: "&bMembers"
+        name: "&bTeam Members"
         lore:
-          - "&7Click to view members"
+          - "&7Click to view team members"
         action: "OPEN:team_members"
         close: false
 
@@ -110,9 +110,9 @@ menus:
           material: LIGHT_GRAY_BED
           name: "&7Team Home"
           lore:
-            - "&7The owner hasn't set a home."
+            - "&7The team owner hasn't set a home."
             - ""
-            - "&e(Owner) Click to set home"
+            - "&e(Team Owner) Click to set home"
           action_owner: "TEAMHOME:SET"
           action_member: "NONE"
           close: false
@@ -144,13 +144,13 @@ menus:
         lore:
           - "&7Status: {ff}"
           - ""
-          - "&e(Owner) Click to toggle"
+          - "&e(Team Owner) Click to toggle"
         action: "FF:TOGGLE"
         close: false
 
 
   team_members:
-    title: "&8ᴍᴇᴍʙᴇʀꜱ"
+    title: "&8ᴍᴇᴍʙᴇʀꜱ - {team}"
     rows: 4
 
     filler:
@@ -168,7 +168,7 @@ menus:
         lore:
           - "&7Role: &f{member_role}"
           - ""
-          - "&e(Owner) Click to kick"
+          - "&e(Team Owner) Click to kick"
       click: "CONFIRM:kick_member:{member_uuid}"
       close_on_click: false
 
@@ -307,10 +307,10 @@ menus:
         material: PLAYER_HEAD
         name: "&b{team}"
         lore:
-          - "&7Owner: &f{owner}"
+          - "&7Team Owner: &f{owner}"
           - "&7Members: &f{members}"
           - ""
-          - "&eClick to view info"
+          - "&eClick to view members"
 
       click: "OPEN:team_view:{team_id}"
       close_on_click: false
@@ -363,7 +363,7 @@ menus:
 
       accept:
         material: LIME_STAINED_GLASS_PANE
-        name: "&aCONFIRM"
+        name: "&aᴄᴏɴꜰɪʀᴍ"
         lore:
           - "&7Click to confirm"
         action: "{confirm_action_accept}"

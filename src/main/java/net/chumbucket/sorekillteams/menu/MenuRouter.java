@@ -18,6 +18,7 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.inventory.meta.SkullMeta;
 
+import java.lang.reflect.Method;
 import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -26,11 +27,27 @@ public final class MenuRouter {
 
     private final SorekillTeamsPlugin plugin;
 
-    // viewer -> task id for cycling member head
-    private final Map<UUID, Integer> cyclingTasks = new ConcurrentHashMap<>();
-    private final Map<UUID, Integer> cyclingIndex = new ConcurrentHashMap<>();
-
+    // ---- team_info member head cycle (single slot) ----
+    private final Map<UUID, Integer> memberCycleTasks = new ConcurrentHashMap<>();
+    private final Map<UUID, Integer> memberCycleIndex = new ConcurrentHashMap<>();
     private static final long MEMBER_HEAD_CYCLE_TICKS = 40L; // 2s
+
+    // ---- browse_teams cycle (many slots) ----
+    private final Map<UUID, Integer> browseCycleTasks = new ConcurrentHashMap<>();
+    private final Map<UUID, Map<UUID, Integer>> browseCycleIndexByTeam = new ConcurrentHashMap<>();
+    private static final long BROWSE_HEAD_CYCLE_TICKS = 40L; // 2s
+
+    // ---- Paper-only skull profile (reflection; compiles on Spigot) ----
+    // Bukkit#createProfile(UUID) (Paper only)
+    private static final Method PAPER_BUKKIT_CREATE_PROFILE_UUID = resolveBukkitCreateProfileUuid();
+    // Bukkit#createProfile(UUID, String) (some Paper builds)
+    private static final Method PAPER_BUKKIT_CREATE_PROFILE_UUID_NAME = resolveBukkitCreateProfileUuidName();
+    // SkullMeta#setPlayerProfile(PlayerProfile) or #setOwnerProfile(PlayerProfile) (Paper only)
+    private static final Method PAPER_SKULL_SET_PROFILE = resolveSkullSetProfile();
+
+    // ---- Paper offline-skin cache (textures fetched asynchronously) ----
+    private final Map<UUID, Object> paperProfileCache = new ConcurrentHashMap<>();
+    private final Set<UUID> paperProfileInFlight = ConcurrentHashMap.newKeySet();
 
     public MenuRouter(SorekillTeamsPlugin plugin) {
         this.plugin = plugin;
@@ -41,14 +58,14 @@ public final class MenuRouter {
     // --------------------
 
     public void open(Player p, String menuKey) {
-        open(p, menuKey, 0);
+        open(p, menuKey, 0, null);
     }
 
     // --------------------
-    // Core open with paging
+    // Core open with paging + optional context
     // --------------------
 
-    private void open(Player p, String menuKey, int page) {
+    private void open(Player p, String menuKey, int page, Map<String, String> ctx) {
         if (plugin == null || p == null) return;
         if (plugin.menus() == null) return;
         if (!plugin.menus().enabledInConfigYml()) return;
@@ -58,17 +75,34 @@ public final class MenuRouter {
         ConfigurationSection menu = plugin.menus().menu(menuKey);
         if (menu == null) return;
 
-        // IMPORTANT: compute viewerTeam BEFORE applying title placeholders
+        // Viewer team (for placeholders on most menus)
         Team viewerTeam = plugin.teams().getTeamByPlayer(p.getUniqueId()).orElse(null);
 
+        // For some menus (team_members opened from browse_teams), placeholders should use the TARGET team
+        Team placeholderTeam = viewerTeam;
+        if ("team_members".equalsIgnoreCase(menuKey) && ctx != null) {
+            String ctxTeamId = ctx.get("team_id");
+            UUID tid = safeUuid(ctxTeamId);
+            if (tid != null) {
+                placeholderTeam = plugin.teams().getTeamById(tid).orElse(viewerTeam);
+            }
+        }
+
         String rawTitle = plugin.menus().str(menu, "title", "&8ᴛᴇᴀᴍꜱ");
-        String title = apply(p, viewerTeam, rawTitle); // apply() already colors
+        String title = apply(p, placeholderTeam, rawTitle);
 
         int rows = Menus.clampRows(plugin.menus().integer(menu, "rows", 3));
         int size = rows * 9;
 
         MenuHolder holder = new MenuHolder(menuKey, p);
         holder.setPage(Math.max(0, page));
+
+        // carry context
+        if (ctx != null) {
+            for (Map.Entry<String, String> e : ctx.entrySet()) {
+                holder.ctxPut(e.getKey(), e.getValue());
+            }
+        }
 
         Inventory inv = Bukkit.createInventory(holder, size, title);
         holder.setInventory(inv);
@@ -111,16 +145,11 @@ public final class MenuRouter {
 
             // team_info special dynamics
             if ("team_info".equalsIgnoreCase(menuKey) && viewerTeam != null) {
-                // nametag: owner -> disband confirm, member -> leave confirm
                 bindStatic(inv, holder, size, p, viewerTeam, items, "name_tag", actionForNameTag(p, viewerTeam));
-
-                // sword: teamchat toggle
                 bindStatic(inv, holder, size, p, viewerTeam, items, "team_chat", "TEAMCHAT:TOGGLE");
-
-                // shield: friendly fire toggle (owner only) - your runAction enforces owner
                 bindStatic(inv, holder, size, p, viewerTeam, items, "friendly_fire", "FF:TOGGLE");
 
-                // members head: open members menu + cycles
+                // members head: cycles (team_info only)
                 ConfigurationSection mh = items.getConfigurationSection("members_head");
                 if (mh != null) {
                     int slot = Menus.clampSlot(mh.getInt("slot", 13), size);
@@ -137,6 +166,7 @@ public final class MenuRouter {
 
                 // home bed dynamic
                 renderTeamHomeBed(inv, holder, size, p, viewerTeam, items);
+
             } else {
                 // generic statics
                 bindStatic(inv, holder, size, p, viewerTeam, items, "invites", null);
@@ -165,10 +195,24 @@ public final class MenuRouter {
         String a = action.trim();
         if (a.isEmpty() || a.equalsIgnoreCase("NONE")) return;
 
-        // OPEN:<menuKey>
+        // OPEN:<menuKey> or OPEN:<menuKey>:<payload>
         if (a.regionMatches(true, 0, "OPEN:", 0, "OPEN:".length())) {
-            String key = a.substring("OPEN:".length()).trim();
-            if (!key.isEmpty()) open(p, key, 0);
+            String rest = a.substring("OPEN:".length()).trim();
+            if (rest.isEmpty()) return;
+
+            String[] parts = rest.split(":", 2);
+            String key = parts[0].trim();
+            String payload = (parts.length > 1 ? parts[1].trim() : "");
+
+            if (key.isEmpty()) return;
+
+            if (!payload.isEmpty()) {
+                Map<String, String> ctx = new HashMap<>();
+                ctx.put("team_id", payload);
+                open(p, key, 0, ctx);
+            } else {
+                open(p, key, 0, null);
+            }
             return;
         }
 
@@ -182,7 +226,12 @@ public final class MenuRouter {
             if (dir.equals("NEXT")) newPage++;
             if (dir.equals("PREV")) newPage = Math.max(0, newPage - 1);
 
-            open(p, holder.menuKey(), newPage);
+            // carry ctx forward
+            Map<String, String> ctx = new HashMap<>();
+            String teamId = holder.ctxGet("team_id");
+            if (teamId != null) ctx.put("team_id", teamId);
+
+            open(p, holder.menuKey(), newPage, ctx.isEmpty() ? null : ctx);
             return;
         }
 
@@ -221,8 +270,6 @@ public final class MenuRouter {
 
         // TEAMCHAT:TOGGLE
         if (a.equalsIgnoreCase("TEAMCHAT:TOGGLE")) {
-
-            // Respect config "toggle disabled" (matches your messages.yml keys)
             if (!plugin.getConfig().getBoolean("team_chat.toggle_enabled", true)) {
                 plugin.msg().send(p, "teamchat_toggle_disabled");
                 return;
@@ -233,7 +280,7 @@ public final class MenuRouter {
             boolean enabled = plugin.teams().isTeamChatEnabled(p.getUniqueId());
             plugin.msg().send(p, enabled ? "teamchat_on" : "teamchat_off");
 
-            open(p, "team_info", 0);
+            open(p, "team_info", 0, null);
             return;
         }
 
@@ -241,11 +288,10 @@ public final class MenuRouter {
         if (a.equalsIgnoreCase("FF:TOGGLE")) {
             Team t = plugin.teams().getTeamByPlayer(p.getUniqueId()).orElse(null);
             if (t == null) return;
-
             if (!p.getUniqueId().equals(t.getOwner())) return;
 
             p.performCommand("team ff toggle");
-            plugin.getServer().getScheduler().runTask(plugin, () -> open(p, "team_info", 0));
+            plugin.getServer().getScheduler().runTask(plugin, () -> open(p, "team_info", 0, null));
             return;
         }
 
@@ -254,7 +300,7 @@ public final class MenuRouter {
             int max = Math.max(1, plugin.getConfig().getInt("homes.max_homes", 1));
             if (max <= 1) {
                 p.performCommand("team sethome team");
-                plugin.getServer().getScheduler().runTask(plugin, () -> open(p, "team_info", 0));
+                plugin.getServer().getScheduler().runTask(plugin, () -> open(p, "team_info", 0, null));
             } else {
                 p.performCommand("team sethome");
             }
@@ -264,20 +310,15 @@ public final class MenuRouter {
         // TEAMHOME:TELEPORT_ONE
         if (a.equalsIgnoreCase("TEAMHOME:TELEPORT_ONE")) {
             int max = Math.max(1, plugin.getConfig().getInt("homes.max_homes", 1));
-            if (max <= 1) {
-                p.performCommand("team home team");
-            } else {
-                p.performCommand("team home");
-            }
+            if (max <= 1) p.performCommand("team home team");
+            else p.performCommand("team home");
             return;
         }
 
         // TEAMHOME:TELEPORT:<name>
         if (a.regionMatches(true, 0, "TEAMHOME:TELEPORT:", 0, "TEAMHOME:TELEPORT:".length())) {
             String homeName = a.substring("TEAMHOME:TELEPORT:".length()).trim();
-            if (!homeName.isBlank()) {
-                p.performCommand("team home " + homeName);
-            }
+            if (!homeName.isBlank()) p.performCommand("team home " + homeName);
             return;
         }
 
@@ -314,14 +355,12 @@ public final class MenuRouter {
         int rows = Menus.clampRows(plugin.menus().integer(root, "rows", 3));
         int size = rows * 9;
 
-        // title can also contain placeholders in variants later; keep as-is for now
         String title = Msg.color(plugin.menus().str(v, "title", "&8ᴄᴏɴꜰɪʀᴍ"));
 
         MenuHolder holder = new MenuHolder("confirm:" + variant, p);
         Inventory inv = Bukkit.createInventory(holder, size, title);
         holder.setInventory(inv);
 
-        // filler
         ConfigurationSection filler = root.getConfigurationSection("filler");
         boolean fillerEnabled = plugin.menus().bool(filler, "enabled", true);
         if (fillerEnabled) {
@@ -331,23 +370,20 @@ public final class MenuRouter {
             for (int i = 0; i < size; i++) inv.setItem(i, fill);
         }
 
-        // layout slots (null-safe)
         ConfigurationSection layout = root.getConfigurationSection("layout");
         int denySlot = Menus.clampSlot(layout == null ? 10 : layout.getInt("deny_slot", 10), size);
         int subjSlot = Menus.clampSlot(layout == null ? 13 : layout.getInt("subject_slot", 13), size);
-        int accSlot  = Menus.clampSlot(layout == null ? 16 : layout.getInt("accept_slot", 16), size);
+        int accSlot = Menus.clampSlot(layout == null ? 16 : layout.getInt("accept_slot", 16), size);
 
-        // buttons (null-safe)
         ConfigurationSection buttons = root.getConfigurationSection("buttons");
         ConfigurationSection denyB = buttons == null ? null : buttons.getConfigurationSection("deny");
-        ConfigurationSection accB  = buttons == null ? null : buttons.getConfigurationSection("accept");
-        ConfigurationSection subB  = buttons == null ? null : buttons.getConfigurationSection("subject");
+        ConfigurationSection accB = buttons == null ? null : buttons.getConfigurationSection("accept");
+        ConfigurationSection subB = buttons == null ? null : buttons.getConfigurationSection("subject");
 
-        // resolve subject + actions
         String subjectName = "Confirm";
         String subtitle = plugin.menus().str(v, "subtitle", "");
         String acceptAction = plugin.menus().str(v, "default_accept_action", "NONE");
-        String denyAction   = plugin.menus().str(v, "default_deny_action", "NONE");
+        String denyAction = plugin.menus().str(v, "default_deny_action", "NONE");
         UUID subjectHeadUuid = null;
 
         if (variant.equals("invite")) {
@@ -407,7 +443,6 @@ public final class MenuRouter {
             }
         }
 
-        // deny button
         if (denyB != null) {
             ItemStack it = item(
                     plugin.menus().material(denyB, "material", Material.RED_STAINED_GLASS_PANE),
@@ -419,7 +454,6 @@ public final class MenuRouter {
             holder.bind(denySlot, denyAction, close);
         }
 
-        // accept button
         if (accB != null) {
             ItemStack it = item(
                     plugin.menus().material(accB, "material", Material.LIME_STAINED_GLASS_PANE),
@@ -431,7 +465,6 @@ public final class MenuRouter {
             holder.bind(accSlot, acceptAction, close);
         }
 
-        // subject (team head is owner head)
         String subjectLine = (subB == null)
                 ? "&b{subject}"
                 : plugin.menus().str(subB, "name", "&b{subject}");
@@ -462,7 +495,7 @@ public final class MenuRouter {
     private void denyInviteAndReturn(Player p, UUID teamId) {
         if (p == null || teamId == null) return;
         p.performCommand("team deny " + teamId);
-        plugin.getServer().getScheduler().runTask(plugin, () -> open(p, "invites", 0));
+        plugin.getServer().getScheduler().runTask(plugin, () -> open(p, "invites", 0, null));
     }
 
     // --------------------
@@ -476,7 +509,6 @@ public final class MenuRouter {
         List<Integer> slots = list.getIntegerList("slots");
         if (slots == null) slots = List.of();
 
-        // ✅ perPage should come from pagination.per_page (if present), otherwise use slots size
         int perPage = Math.max(1, slots.size());
         ConfigurationSection menu = plugin.menus().menu(menuKey);
         if (menu != null) {
@@ -550,57 +582,62 @@ public final class MenuRouter {
                 Team t = pageItems.get(i);
 
                 String owner = nameOf(t.getOwner());
-                String members = String.valueOf(uniqueMemberCount(t));
+                String membersCount = String.valueOf(uniqueMemberCount(t));
 
-                ItemStack it;
+                // Click should open team_members for THAT team
+                holder.bind(slot, "OPEN:team_members:" + t.getId(), closeOnClick);
+
                 if (mat == Material.PLAYER_HEAD) {
-                    it = buildPlayerHead(t.getOwner(),
-                            Msg.color(name.replace("{team}", Msg.color(t.getName()))),
-                            lore.stream()
-                                    .map(x -> Msg.color(x.replace("{team}", Msg.color(t.getName()))
-                                            .replace("{owner}", owner)
-                                            .replace("{members}", members)))
-                                    .toList());
+                    ItemStack head = buildBrowseTeamCycleHead(viewer, t, 0, name, lore, owner, membersCount);
+                    inv.setItem(slot, head);
                 } else {
-                    it = item(
+                    ItemStack it = item(
                             mat,
-                            Msg.color(name.replace("{team}", Msg.color(t.getName()))),
+                            Msg.color(name.replace("{team}", Msg.color(t.getName() == null ? "Team" : t.getName()))),
                             lore.stream()
-                                    .map(x -> Msg.color(x.replace("{team}", Msg.color(t.getName()))
+                                    .map(x -> Msg.color(x.replace("{team}", Msg.color(t.getName() == null ? "Team" : t.getName()))
                                             .replace("{owner}", owner)
-                                            .replace("{members}", members)))
+                                            .replace("{members}", membersCount)))
                                     .toList()
                     );
+                    inv.setItem(slot, it);
                 }
+            }
 
-                inv.setItem(slot, it);
-
-                String action = clickActionTemplate
-                        .replace("{team_id}", t.getId().toString())
-                        .replace("{team}", t.getName() == null ? "Team" : t.getName());
-
-                holder.bind(slot, action, closeOnClick);
+            if (mat == Material.PLAYER_HEAD && !pageItems.isEmpty() && !slots.isEmpty()) {
+                startBrowseTeamsCycling(viewer, holder, slots, pageItems, size, name, lore);
             }
             return;
         }
 
         if (type.equals("TEAM_MEMBERS")) {
-            if (viewerTeam == null) return;
+            // If we were opened from browse_teams, holder.ctx("team_id") will be set.
+            Team targetTeam = viewerTeam;
 
-            List<UUID> members = uniqueTeamMembers(viewerTeam);
+            String ctxTeamId = holder.ctxGet("team_id");
+            if (ctxTeamId != null && !ctxTeamId.isBlank()) {
+                UUID tid = safeUuid(ctxTeamId);
+                if (tid != null) {
+                    targetTeam = plugin.teams().getTeamById(tid).orElse(null);
+                }
+            }
+
+            if (targetTeam == null) return;
+
+            List<UUID> members = uniqueTeamMembers(targetTeam);
             List<UUID> pageItems = slice(members, start, perPage);
 
-            boolean isOwner = viewerTeam.getOwner() != null && viewerTeam.getOwner().equals(viewer.getUniqueId());
+            boolean isOwner = targetTeam.getOwner() != null && targetTeam.getOwner().equals(viewer.getUniqueId());
 
             for (int i = 0; i < Math.min(slots.size(), pageItems.size()); i++) {
                 int slot = Menus.clampSlot(slots.get(i), size);
                 UUID u = pageItems.get(i);
 
                 String memberName = nameOf(u);
-                String role = (viewerTeam.getOwner() != null && viewerTeam.getOwner().equals(u)) ? "Owner" : "Member";
+                String role = (targetTeam.getOwner() != null && targetTeam.getOwner().equals(u)) ? "Owner" : "Member";
 
                 String action = "NONE";
-                if (isOwner && viewerTeam.getOwner() != null && !viewerTeam.getOwner().equals(u) && !viewer.getUniqueId().equals(u)) {
+                if (isOwner && targetTeam.getOwner() != null && !targetTeam.getOwner().equals(u) && !viewer.getUniqueId().equals(u)) {
                     action = clickActionTemplate.replace("{member_uuid}", u.toString()).replace("{member_name}", memberName);
                 }
 
@@ -612,6 +649,12 @@ public final class MenuRouter {
 
                 inv.setItem(slot, head);
                 holder.bind(slot, action, closeOnClick);
+            }
+
+            // If we're on Paper and using async profile completion, do a couple delayed refresh passes
+            // so offline skins pop in without needing a reopen.
+            if (PAPER_SKULL_SET_PROFILE != null) {
+                scheduleTeamMembersRefresh(viewer, holder, size, targetTeam, slots, page, perPage, name, lore);
             }
             return;
         }
@@ -645,7 +688,6 @@ public final class MenuRouter {
         if (pag == null) return;
         if (!plugin.menus().bool(pag, "enabled", false)) return;
 
-        // compute pages based on list size
         ConfigurationSection list = menu.getConfigurationSection("list");
         if (list == null) return;
 
@@ -660,7 +702,17 @@ public final class MenuRouter {
 
         if (type.equals("INVITES")) total = plugin.teams().getInvites(viewer.getUniqueId()).size();
         if (type.equals("TEAMS") && plugin.teams() instanceof SimpleTeamService sts) total = sts.allTeams().size();
-        if (type.equals("TEAM_MEMBERS") && viewerTeam != null) total = uniqueTeamMembers(viewerTeam).size();
+
+        if (type.equals("TEAM_MEMBERS")) {
+            Team targetTeam = viewerTeam;
+            String ctxTeamId = holder.ctxGet("team_id");
+            if (ctxTeamId != null && !ctxTeamId.isBlank()) {
+                UUID tid = safeUuid(ctxTeamId);
+                if (tid != null) targetTeam = plugin.teams().getTeamById(tid).orElse(null);
+            }
+            if (targetTeam != null) total = uniqueTeamMembers(targetTeam).size();
+        }
+
         if (type.equals("TEAM_HOMES") && viewerTeam != null) total = getTeamHomeNames(viewerTeam).size();
 
         int pages = Math.max(1, (total + perPage - 1) / perPage);
@@ -794,7 +846,6 @@ public final class MenuRouter {
             return;
         }
 
-        // many
         ConfigurationSection whenMany = sec.getConfigurationSection("when_many");
         if (whenMany == null) return;
 
@@ -810,7 +861,7 @@ public final class MenuRouter {
     }
 
     // --------------------
-    // Cycling member head
+    // Cycling: team_info members head (single slot)
     // --------------------
 
     private void startMemberHeadCycling(Player viewer, MenuHolder holder, int slot, ConfigurationSection membersHeadSec) {
@@ -845,9 +896,9 @@ public final class MenuRouter {
             List<UUID> members = uniqueTeamMembers(team);
             if (members.isEmpty()) return;
 
-            int idx = cyclingIndex.getOrDefault(viewerId, 0);
+            int idx = memberCycleIndex.getOrDefault(viewerId, 0);
             int nextIdx = (idx + 1) % members.size();
-            cyclingIndex.put(viewerId, nextIdx);
+            memberCycleIndex.put(viewerId, nextIdx);
 
             Inventory top = viewer.getOpenInventory().getTopInventory();
             ItemStack head = buildMemberCycleHead(viewer, team, membersHeadSec, nextIdx);
@@ -855,18 +906,94 @@ public final class MenuRouter {
 
         }, 1L, MEMBER_HEAD_CYCLE_TICKS).getTaskId();
 
-        cyclingTasks.put(viewerId, taskId);
-        cyclingIndex.putIfAbsent(viewerId, 0);
+        memberCycleTasks.put(viewerId, taskId);
+        memberCycleIndex.putIfAbsent(viewerId, 0);
+    }
+
+    // --------------------
+    // Cycling: browse_teams (many slots)
+    // --------------------
+
+    private void startBrowseTeamsCycling(Player viewer,
+                                         MenuHolder holder,
+                                         List<Integer> slots,
+                                         List<Team> pageTeams,
+                                         int invSize,
+                                         String nameTemplate,
+                                         List<String> loreTemplate) {
+
+        UUID viewerId = viewer.getUniqueId();
+
+        Integer old = browseCycleTasks.remove(viewerId);
+        if (old != null) {
+            try { Bukkit.getScheduler().cancelTask(old); } catch (Exception ignored) {}
+        }
+
+        browseCycleIndexByTeam.putIfAbsent(viewerId, new ConcurrentHashMap<>());
+
+        int taskId = Bukkit.getScheduler().runTaskTimer(plugin, () -> {
+            if (!viewer.isOnline()) {
+                stopCycling(viewerId);
+                return;
+            }
+
+            if (viewer.getOpenInventory() == null
+                    || viewer.getOpenInventory().getTopInventory() == null
+                    || viewer.getOpenInventory().getTopInventory().getHolder() != holder) {
+                stopCycling(viewerId);
+                return;
+            }
+
+            if (!"browse_teams".equalsIgnoreCase(holder.menuKey())) {
+                Integer tid = browseCycleTasks.remove(viewerId);
+                if (tid != null) {
+                    try { Bukkit.getScheduler().cancelTask(tid); } catch (Exception ignored) {}
+                }
+                return;
+            }
+
+            Inventory top = viewer.getOpenInventory().getTopInventory();
+            Map<UUID, Integer> idxMap = browseCycleIndexByTeam.get(viewerId);
+            if (top == null || idxMap == null) return;
+
+            for (int i = 0; i < Math.min(slots.size(), pageTeams.size()); i++) {
+                int slot = Menus.clampSlot(slots.get(i), invSize);
+                Team team = pageTeams.get(i);
+                if (team == null || team.getId() == null) continue;
+
+                List<UUID> members = uniqueTeamMembers(team);
+                if (members.isEmpty()) continue;
+
+                int idx = idxMap.getOrDefault(team.getId(), 0);
+                int next = (idx + 1) % members.size();
+                idxMap.put(team.getId(), next);
+
+                String owner = nameOf(team.getOwner());
+                String membersCount = String.valueOf(uniqueMemberCount(team));
+
+                ItemStack head = buildBrowseTeamCycleHead(viewer, team, next, nameTemplate, loreTemplate, owner, membersCount);
+                top.setItem(slot, head);
+            }
+
+        }, 1L, BROWSE_HEAD_CYCLE_TICKS).getTaskId();
+
+        browseCycleTasks.put(viewerId, taskId);
     }
 
     public void stopCycling(UUID viewerId) {
         if (viewerId == null) return;
 
-        Integer taskId = cyclingTasks.remove(viewerId);
-        if (taskId != null) {
-            try { Bukkit.getScheduler().cancelTask(taskId); } catch (Exception ignored) {}
+        Integer t1 = memberCycleTasks.remove(viewerId);
+        if (t1 != null) {
+            try { Bukkit.getScheduler().cancelTask(t1); } catch (Exception ignored) {}
         }
-        cyclingIndex.remove(viewerId);
+        memberCycleIndex.remove(viewerId);
+
+        Integer t2 = browseCycleTasks.remove(viewerId);
+        if (t2 != null) {
+            try { Bukkit.getScheduler().cancelTask(t2); } catch (Exception ignored) {}
+        }
+        browseCycleIndexByTeam.remove(viewerId);
     }
 
     private ItemStack buildMemberCycleHead(Player viewer, Team team, ConfigurationSection mh, int idx) {
@@ -879,6 +1006,32 @@ public final class MenuRouter {
         List<String> lore = applyList(viewer, team, plugin.menus().strList(mh, "lore"));
 
         return buildPlayerHead(who, name, lore);
+    }
+
+    private ItemStack buildBrowseTeamCycleHead(Player viewer,
+                                              Team team,
+                                              int idx,
+                                              String nameTemplate,
+                                              List<String> loreTemplate,
+                                              String ownerName,
+                                              String membersCount) {
+
+        List<UUID> members = uniqueTeamMembers(team);
+        UUID who = members.isEmpty() ? team.getOwner() : members.get(Math.floorMod(idx, members.size()));
+
+        String teamName = (team.getName() == null ? "Team" : team.getName());
+
+        String builtName = Msg.color(nameTemplate.replace("{team}", Msg.color(teamName)));
+
+        List<String> builtLore = loreTemplate.stream()
+                .map(x -> Msg.color(
+                        x.replace("{team}", Msg.color(teamName))
+                                .replace("{owner}", ownerName)
+                                .replace("{members}", membersCount)
+                ))
+                .toList();
+
+        return buildPlayerHead(who, builtName, builtLore);
     }
 
     // --------------------
@@ -1037,28 +1190,245 @@ public final class MenuRouter {
         return it;
     }
 
+    // --------------------
+    // Paper offline profile completion (async)
+    // --------------------
+
+    private void warmPaperProfileAsync(UUID uuid, String nameHint) {
+        if (plugin == null || uuid == null) return;
+
+        // Already cached or already fetching
+        if (paperProfileCache.containsKey(uuid)) return;
+        if (!paperProfileInFlight.add(uuid)) return;
+
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+            try {
+                Object profile = null;
+
+                // Prefer createProfile(UUID, String) if present
+                if (PAPER_BUKKIT_CREATE_PROFILE_UUID_NAME != null) {
+                    try {
+                        profile = PAPER_BUKKIT_CREATE_PROFILE_UUID_NAME.invoke(null, uuid, safeNameHint(nameHint));
+                    } catch (Throwable ignored) {
+                        profile = null;
+                    }
+                }
+
+                // Fallback: createProfile(UUID)
+                if (profile == null && PAPER_BUKKIT_CREATE_PROFILE_UUID != null) {
+                    try {
+                        profile = PAPER_BUKKIT_CREATE_PROFILE_UUID.invoke(null, uuid);
+                    } catch (Throwable ignored) {
+                        profile = null;
+                    }
+                }
+
+                if (profile == null) return;
+
+                // If we only had createProfile(UUID), try to setName(nameHint) before complete()
+                trySetProfileName(profile, nameHint);
+
+                // Fetch textures: complete() or complete(boolean)
+                if (tryCompleteProfile(profile)) {
+                    paperProfileCache.put(uuid, profile);
+                }
+            } catch (Throwable ignored) {
+                // ignore
+            } finally {
+                paperProfileInFlight.remove(uuid);
+            }
+        });
+    }
+
+    private static String safeNameHint(String nameHint) {
+        if (nameHint == null) return null;
+        String s = nameHint.trim();
+        if (s.isBlank()) return null;
+        // if nameOf() fell back to UUID prefix, don't pass that as a "name"
+        if (s.length() == 8 && s.matches("[0-9a-fA-F]{8}")) return null;
+        return s;
+    }
+
+    private void trySetProfileName(Object profile, String nameHint) {
+        String hint = safeNameHint(nameHint);
+        if (profile == null || hint == null) return;
+
+        try {
+            Method m = profile.getClass().getMethod("setName", String.class);
+            m.invoke(profile, hint);
+        } catch (Throwable ignored) {
+            // ignore
+        }
+    }
+
+    private boolean tryCompleteProfile(Object profile) {
+        if (profile == null) return false;
+
+        try {
+            // complete(boolean)
+            try {
+                Method m = profile.getClass().getMethod("complete", boolean.class);
+                Object r = m.invoke(profile, true);
+                return (r instanceof Boolean) ? (Boolean) r : true;
+            } catch (NoSuchMethodException ignored) {
+                // complete()
+                Method m = profile.getClass().getMethod("complete");
+                Object r = m.invoke(profile);
+                return (r instanceof Boolean) ? (Boolean) r : true;
+            }
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    /**
+     * Build a player head:
+     * - On Paper, caches a completed PlayerProfile (textures fetched async) and applies it via reflection
+     *   so offline players show correct skins.
+     * - Otherwise falls back to SkullMeta#setOwningPlayer (Spigot cache-dependent).
+     *
+     * IMPORTANT: We do NOT call setOwningPlayer if we successfully applied a Paper profile,
+     * because that can override the applied profile and cause Steve/Alex again.
+     */
     private ItemStack buildPlayerHead(UUID owningUuid, String name, List<String> lore) {
         ItemStack it = new ItemStack(Material.PLAYER_HEAD);
         ItemMeta meta = it.getItemMeta();
 
-        if (meta instanceof SkullMeta skull) {
-            if (owningUuid != null) {
-                OfflinePlayer off = Bukkit.getOfflinePlayer(owningUuid);
-                if (off != null) skull.setOwningPlayer(off);
-            }
-
-            skull.setDisplayName(Msg.color(name == null ? "" : name));
-            if (lore != null && !lore.isEmpty()) {
-                List<String> out = new ArrayList<>();
-                for (String line : lore) out.add(Msg.color(line));
-                skull.setLore(out);
-            }
-
-            skull.addItemFlags(ItemFlag.HIDE_ATTRIBUTES);
-            it.setItemMeta(skull);
-            return it;
+        if (!(meta instanceof SkullMeta skull)) {
+            return item(Material.PLAYER_HEAD, name, lore);
         }
 
-        return item(Material.PLAYER_HEAD, name, lore);
+        boolean appliedPaperProfile = false;
+
+        // Paper path: apply cached profile if present; otherwise queue async completion
+        if (owningUuid != null && PAPER_SKULL_SET_PROFILE != null) {
+            Object cached = paperProfileCache.get(owningUuid);
+            if (cached != null) {
+                try {
+                    PAPER_SKULL_SET_PROFILE.invoke(skull, cached);
+                    appliedPaperProfile = true;
+                } catch (Throwable ignored) {
+                    appliedPaperProfile = false;
+                }
+            } else {
+                String hint = null;
+                try { hint = nameOf(owningUuid); } catch (Throwable ignored) { hint = null; }
+                warmPaperProfileAsync(owningUuid, hint);
+            }
+        }
+
+        // Fallback (Spigot): ONLY if Paper profile was NOT applied
+        if (!appliedPaperProfile && owningUuid != null) {
+            try {
+                OfflinePlayer off = Bukkit.getOfflinePlayer(owningUuid);
+                if (off != null) skull.setOwningPlayer(off);
+            } catch (Throwable ignored) {}
+        }
+
+        skull.setDisplayName(Msg.color(name == null ? "" : name));
+        if (lore != null && !lore.isEmpty()) {
+            List<String> out = new ArrayList<>();
+            for (String line : lore) out.add(Msg.color(line));
+            skull.setLore(out);
+        }
+        skull.addItemFlags(ItemFlag.HIDE_ATTRIBUTES);
+        it.setItemMeta(skull);
+        return it;
+    }
+
+    /**
+     * Team members menu doesn't cycle by default, so schedule a couple delayed refresh passes
+     * to let async Paper profiles complete and then re-apply heads.
+     */
+    private void scheduleTeamMembersRefresh(Player viewer,
+                                           MenuHolder holder,
+                                           int invSize,
+                                           Team targetTeam,
+                                           List<Integer> slots,
+                                           int page,
+                                           int perPage,
+                                           String nameTemplate,
+                                           List<String> loreTemplate) {
+
+        if (plugin == null || viewer == null || holder == null || targetTeam == null) return;
+        if (slots == null || slots.isEmpty()) return;
+
+        // Two passes: quick + slightly later
+        int[] delays = new int[] { 20, 60 };
+
+        for (int delay : delays) {
+            Bukkit.getScheduler().runTaskLater(plugin, () -> {
+                if (!viewer.isOnline()) return;
+
+                if (viewer.getOpenInventory() == null
+                        || viewer.getOpenInventory().getTopInventory() == null
+                        || viewer.getOpenInventory().getTopInventory().getHolder() != holder) {
+                    return;
+                }
+
+                if (!"team_members".equalsIgnoreCase(holder.menuKey())) return;
+
+                Inventory top = viewer.getOpenInventory().getTopInventory();
+
+                List<UUID> members = uniqueTeamMembers(targetTeam);
+                int start = Math.max(0, page) * Math.max(1, perPage);
+                List<UUID> pageItems = slice(members, start, Math.max(1, perPage));
+
+                for (int i = 0; i < Math.min(slots.size(), pageItems.size()); i++) {
+                    int slot = Menus.clampSlot(slots.get(i), invSize);
+                    UUID u = pageItems.get(i);
+
+                    String memberName = nameOf(u);
+                    String role = (targetTeam.getOwner() != null && targetTeam.getOwner().equals(u)) ? "Owner" : "Member";
+
+                    ItemStack head = buildPlayerHead(
+                            u,
+                            Msg.color(nameTemplate.replace("{member_name}", memberName).replace("{member_role}", role)),
+                            loreTemplate.stream()
+                                    .map(x -> Msg.color(x.replace("{member_name}", memberName).replace("{member_role}", role)))
+                                    .toList()
+                    );
+
+                    top.setItem(slot, head);
+                }
+            }, delay);
+        }
+    }
+
+    // --------------------
+    // Reflection helpers (NO java.lang.Class shadowing)
+    // --------------------
+
+    private static Method resolveBukkitCreateProfileUuid() {
+        try {
+            // public static PlayerProfile createProfile(UUID uuid)
+            return Bukkit.class.getMethod("createProfile", UUID.class);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static Method resolveBukkitCreateProfileUuidName() {
+        try {
+            // public static PlayerProfile createProfile(UUID uuid, String name)
+            return Bukkit.class.getMethod("createProfile", UUID.class, String.class);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static Method resolveSkullSetProfile() {
+        try {
+            // On Paper: SkullMeta has setPlayerProfile(PlayerProfile) OR setOwnerProfile(PlayerProfile)
+            for (Method m : SkullMeta.class.getMethods()) {
+                if (!m.getName().equals("setPlayerProfile") && !m.getName().equals("setOwnerProfile")) continue;
+                Class<?>[] params = m.getParameterTypes();
+                if (params.length == 1 && params[0].getName().equals("org.bukkit.profile.PlayerProfile")) {
+                    m.setAccessible(true);
+                    return m;
+                }
+            }
+        } catch (Throwable ignored) {}
+        return null;
     }
 }

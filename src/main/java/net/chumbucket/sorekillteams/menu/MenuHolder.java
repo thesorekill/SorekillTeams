@@ -5,8 +5,10 @@ import org.bukkit.entity.Player;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
 
 public final class MenuHolder implements InventoryHolder {
 
@@ -25,6 +27,9 @@ public final class MenuHolder implements InventoryHolder {
     private final Map<String, String> ctx = new HashMap<>();
 
     private Inventory inv;
+
+    // ✅ NEW: slot -> teamId (for browse teams head cycling)
+    private final Map<Integer, UUID> cyclingTeamBySlot = new HashMap<>();
 
     public MenuHolder(String menuKey, Player viewer) {
         this.menuKey = menuKey;
@@ -46,6 +51,7 @@ public final class MenuHolder implements InventoryHolder {
         rightActionsBySlot.clear();
         closeBySlot.clear();
         ctx.clear();
+        cyclingTeamBySlot.clear();
     }
 
     /** Bind single action (left+right same). */
@@ -83,5 +89,15 @@ public final class MenuHolder implements InventoryHolder {
     public String ctxGet(String key) {
         if (key == null) return null;
         return ctx.get(key);
+    }
+
+    // ---------- browse-teams cycling ----------
+    public void registerCyclingTeamSlot(int slot, UUID teamId) {
+        if (teamId == null) return;
+        cyclingTeamBySlot.put(slot, teamId);
+    }
+
+    public Map<Integer, UUID> cyclingTeamSlots() {
+        return Collections.unmodifiableMap(cyclingTeamBySlot);
     }
 }
