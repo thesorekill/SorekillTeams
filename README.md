@@ -6,6 +6,16 @@ Designed for modern servers and future proxy networks, SorekillTeams focuses on 
 
 ---
 
+## 🆕 Latest Release — 1.1.7
+
+### Changelog
+- Fixed offline player head skins not rendering in menus
+- Restored correct skin loading after menu system refactor
+- Improved reliability of Paper PlayerProfile skin fetching
+- No config changes required
+
+---
+
 ## Overview
 
 SorekillTeams allows players to form persistent teams that feel natural and intuitive.
@@ -51,6 +61,21 @@ Server owners retain **full control** through permissions and a detailed configu
 
 ---
 
+## Menus (New)
+
+SorekillTeams includes a **built-in GUI menu system** for intuitive team interaction.
+
+- Inventory-based menus for team management
+- Team browsing and member viewing
+- Invite management and confirmations
+- Offline player heads with proper skin rendering
+- Permission- and context-aware actions
+- Fully configurable via `menus.yml`
+
+The menu system is designed to remain **lightweight and optional**, complementing command-based workflows rather than replacing them.
+
+---
+
 ## Requirements
 
 - **Java 21**
@@ -70,6 +95,7 @@ Server owners retain **full control** through permissions and a detailed configu
 
 Reload configs anytime with:
 '/sorekillteams reload'
+
 ---
 
 ## Commands
@@ -88,7 +114,7 @@ Reload configs anytime with:
 | `/team kick` | `/team kick <player>` | Kick a member | `sorekillteams.kick` |
 | `/team transfer` | `/team transfer <player>` | Transfer ownership | `sorekillteams.transfer` |
 | `/team rename` | `/team rename <name>` | Rename your team | `sorekillteams.rename` |
-| `/team ff` | `/team ff <on|off|toggle>` | Toggle friendly fire | `sorekillteams.ff` |
+| `/team ff` | `/team ff <on\|off\|toggle>` | Toggle friendly fire | `sorekillteams.ff` |
 | `/tc` | `/tc [message]` | Team chat or toggle mode | `sorekillteams.teamchat` |
 | `/sorekillteams reload` | `/sorekillteams reload` | Reload configs/messages | `sorekillteams.admin.reload` |
 | `/sorekillteams version` | `/sorekillteams version` | Show plugin version | `sorekillteams.admin.version` |
@@ -145,14 +171,6 @@ Reload configs anytime with:
 
 ---
 
-### Max Team Size
-
-- `sorekillteams.max.<number>`
-  - Example: `sorekillteams.max.6`
-- Falls back to `teams.max_members_default` in `config.yml` if none is granted
-
----
-
 ### Admin
 
 | Permission | Description | Default |
@@ -169,33 +187,11 @@ Reload configs anytime with:
 
 ---
 
-## Configuration Overview
-
-- **Storage**
-  - YAML backend, autosave interval, atomic writes, rolling backups
-- **Teams**
-  - Name validation, reserved names, permission-based size limits
-- **Invites**
-  - Expiry, cooldowns, caps, multi-team rules, re-invite refresh
-- **Chat**
-  - Toggleable team chat, custom formats, admin spy
-- **Friendly Fire**
-  - Full damage-source control with anti-spam messages
-- **Homes**
-  - Warmups, cooldowns, max homes, proxy-aware metadata
-- **Admin Safety**
-  - Enable or disable destructive admin actions
-- **Integrations**
-  - PlaceholderAPI, MiniPlaceholders
-
----
-
 ## Planned Features
 
 - Velocity and BungeeCord proxy support
 - Cross-server teams and homes
 - Team roles and permissions
-- GUI-based team menus
 - Scoreboard and nametag modules
 
 ---
