@@ -12,9 +12,13 @@ package net.chumbucket.sorekillteams.storage;
 
 import net.chumbucket.sorekillteams.service.TeamHomeService;
 
+/**
+ * Persistence contract for {@link TeamHomeService}.
+ */
 public interface TeamHomeStorage {
 
     void loadAll(TeamHomeService homes) throws Exception;
 
     void saveAll(TeamHomeService homes) throws Exception;
+
 }

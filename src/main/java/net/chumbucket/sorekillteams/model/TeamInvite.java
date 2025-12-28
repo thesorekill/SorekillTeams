@@ -28,12 +28,22 @@ public final class TeamInvite {
                       UUID target,
                       long createdAtMs,
                       long expiresAtMs) {
+
         this.teamId = Objects.requireNonNull(teamId, "teamId");
-        this.teamName = Objects.requireNonNull(teamName, "teamName");
+
+        final String tn = (teamName == null) ? "" : teamName.trim();
+        this.teamName = tn.isBlank() ? "Team" : tn;
+
         this.inviter = Objects.requireNonNull(inviter, "inviter");
         this.target = Objects.requireNonNull(target, "target");
-        this.createdAtMs = createdAtMs;
-        this.expiresAtMs = expiresAtMs;
+
+        final long now = System.currentTimeMillis();
+        this.createdAtMs = createdAtMs > 0 ? createdAtMs : now;
+
+        // Ensure expires is never "before created" (can happen if config changes or bad data)
+        long exp = expiresAtMs > 0 ? expiresAtMs : (this.createdAtMs + 1L);
+        if (exp < this.createdAtMs) exp = this.createdAtMs;
+        this.expiresAtMs = exp;
     }
 
     public UUID getTeamId() { return teamId; }
@@ -64,4 +74,32 @@ public final class TeamInvite {
     public UUID target() { return getTarget(); }
     public long createdAtMs() { return getCreatedAtMs(); }
     public long expiresAtMs() { return getExpiresAtMs(); }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof TeamInvite that)) return false;
+        return teamId.equals(that.teamId)
+                && inviter.equals(that.inviter)
+                && target.equals(that.target)
+                && createdAtMs == that.createdAtMs
+                && expiresAtMs == that.expiresAtMs;
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(teamId, inviter, target, createdAtMs, expiresAtMs);
+    }
+
+    @Override
+    public String toString() {
+        return "TeamInvite{" +
+                "teamId=" + teamId +
+                ", teamName='" + teamName + '\'' +
+                ", inviter=" + inviter +
+                ", target=" + target +
+                ", createdAtMs=" + createdAtMs +
+                ", expiresAtMs=" + expiresAtMs +
+                '}';
+    }
 }

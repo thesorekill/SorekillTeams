@@ -27,6 +27,13 @@ import java.util.stream.Collectors;
 
 public final class YamlTeamStorage implements TeamStorage {
 
+    private static final String ROOT_TEAMS = "teams";
+    private static final String KEY_NAME = "name";
+    private static final String KEY_OWNER = "owner";
+    private static final String KEY_MEMBERS = "members";
+    private static final String KEY_FRIENDLY_FIRE = "friendly_fire";
+    private static final String KEY_CREATED_AT = "created_at";
+
     private final SorekillTeamsPlugin plugin;
     private final File file;
 
@@ -43,73 +50,71 @@ public final class YamlTeamStorage implements TeamStorage {
             return;
         }
 
+        // If missing, just start fresh (no warning needed)
         if (!file.exists()) {
             plugin.getLogger().info("No teams.yml found; starting fresh.");
             return;
         }
 
         final YamlConfiguration yml = YamlConfiguration.loadConfiguration(file);
-        final ConfigurationSection sec = yml.getConfigurationSection("teams");
-        if (sec == null) {
-            plugin.getLogger().info("teams.yml has no 'teams' section; starting fresh.");
+        final ConfigurationSection root = yml.getConfigurationSection(ROOT_TEAMS);
+        if (root == null) {
+            plugin.getLogger().info("teams.yml has no '" + ROOT_TEAMS + "' section; starting fresh.");
             return;
         }
 
         int loaded = 0;
         int skipped = 0;
 
-        for (String key : sec.getKeys(false)) {
-            final ConfigurationSection tSec = sec.getConfigurationSection(key);
+        for (String teamKey : root.getKeys(false)) {
+            final ConfigurationSection tSec = root.getConfigurationSection(teamKey);
             if (tSec == null) {
                 skipped++;
                 continue;
             }
 
             try {
-                final UUID id = safeUuidString(key);
+                final UUID id = safeUuid(teamKey);
                 if (id == null) {
-                    plugin.getLogger().warning("Skipping team with invalid UUID key: " + key);
+                    plugin.getLogger().warning("Skipping team with invalid UUID key: " + teamKey);
                     skipped++;
                     continue;
                 }
 
-                final String nameRaw = tSec.getString("name", "Team");
-                final String name = (nameRaw == null || nameRaw.isBlank()) ? "Team" : nameRaw.trim();
+                final String name = normalizeName(tSec.getString(KEY_NAME, "Team"));
 
-                final UUID owner = safeUuidString(tSec.getString("owner", null));
+                final UUID owner = safeUuid(tSec.getString(KEY_OWNER, null));
                 if (owner == null) {
                     plugin.getLogger().warning("Skipping team " + id + " ('" + name + "') due to missing/invalid owner UUID");
                     skipped++;
                     continue;
                 }
 
-                final List<String> membersStr = tSec.getStringList("members");
-                final Set<UUID> members = new LinkedHashSet<>();
-                for (String ms : membersStr) {
-                    UUID m = safeUuidString(ms);
+                // Members (unique + owner included)
+                final LinkedHashSet<UUID> members = new LinkedHashSet<>();
+                for (String ms : tSec.getStringList(KEY_MEMBERS)) {
+                    UUID m = safeUuid(ms);
                     if (m != null) members.add(m);
                 }
-
-                // Ensure owner is included
                 members.add(owner);
 
-                // created date (fallback: "now" if missing/invalid)
-                long createdAt = tSec.getLong("created_at", System.currentTimeMillis());
+                // created date (fallback: now if missing/invalid)
+                long createdAt = tSec.getLong(KEY_CREATED_AT, System.currentTimeMillis());
                 if (createdAt <= 0) createdAt = System.currentTimeMillis();
 
                 final Team t = new Team(id, name, owner, createdAt);
 
-                // Replace the internal members set contents
+                // Replace internal members set with our cleaned set
                 t.getMembers().clear();
                 t.getMembers().addAll(members);
 
-                // team FF toggle (stored as friendly_fire)
-                t.setFriendlyFireEnabled(tSec.getBoolean("friendly_fire", false));
+                // per-team friendly fire
+                t.setFriendlyFireEnabled(tSec.getBoolean(KEY_FRIENDLY_FIRE, false));
 
                 simple.putLoadedTeam(t);
                 loaded++;
             } catch (Exception e) {
-                plugin.getLogger().warning("Skipping malformed team entry '" + key + "': " +
+                plugin.getLogger().warning("Skipping malformed team entry '" + teamKey + "': " +
                         e.getClass().getSimpleName() + ": " + e.getMessage());
                 skipped++;
             }
@@ -126,7 +131,7 @@ public final class YamlTeamStorage implements TeamStorage {
             return;
         }
 
-        if (!plugin.getDataFolder().exists() && !plugin.getDataFolder().mkdirs()) {
+        if (!ensureDataFolder()) {
             plugin.getLogger().severe("Failed to create plugin data folder: " + plugin.getDataFolder().getAbsolutePath());
             return;
         }
@@ -137,20 +142,20 @@ public final class YamlTeamStorage implements TeamStorage {
         final YamlConfiguration yml = new YamlConfiguration();
 
         for (TeamSnapshot t : snapshot) {
-            final String path = "teams." + t.id;
+            final String base = ROOT_TEAMS + "." + t.id;
 
-            yml.set(path + ".name", t.name);
-            yml.set(path + ".owner", t.owner.toString());
+            yml.set(base + "." + KEY_NAME, t.name);
+            yml.set(base + "." + KEY_OWNER, t.owner.toString());
 
             // Ensure members list is unique + includes owner
             final LinkedHashSet<UUID> members = new LinkedHashSet<>(t.members);
             members.add(t.owner);
 
-            yml.set(path + ".members",
+            yml.set(base + "." + KEY_MEMBERS,
                     members.stream().map(UUID::toString).collect(Collectors.toList()));
 
-            yml.set(path + ".friendly_fire", t.friendlyFire);
-            yml.set(path + ".created_at", t.createdAtMs);
+            yml.set(base + "." + KEY_FRIENDLY_FIRE, t.friendlyFire);
+            yml.set(base + "." + KEY_CREATED_AT, t.createdAtMs);
         }
 
         final File tmp = new File(plugin.getDataFolder(), "teams.yml.tmp");
@@ -168,10 +173,14 @@ public final class YamlTeamStorage implements TeamStorage {
             } catch (AtomicMoveNotSupportedException ignored) {
                 Files.move(tmpPath, destPath, StandardCopyOption.REPLACE_EXISTING);
             }
-
         } catch (Exception e) {
             plugin.getLogger().severe("Failed to save teams.yml: " + e.getClass().getSimpleName() + ": " + e.getMessage());
         }
+    }
+
+    private boolean ensureDataFolder() {
+        File folder = plugin.getDataFolder();
+        return folder.exists() || folder.mkdirs();
     }
 
     private List<TeamSnapshot> snapshotTeams(SimpleTeamService simple) {
@@ -185,7 +194,7 @@ public final class YamlTeamStorage implements TeamStorage {
             if (t.getId() == null || t.getOwner() == null) continue;
 
             final UUID id = t.getId();
-            final String name = (t.getName() == null || t.getName().isBlank()) ? "Team" : t.getName();
+            final String name = normalizeName(t.getName());
             final UUID owner = t.getOwner();
             final long created = t.getCreatedAtMs();
             final boolean ff = t.isFriendlyFireEnabled();
@@ -214,7 +223,7 @@ public final class YamlTeamStorage implements TeamStorage {
             long createdAtMs
     ) {}
 
-    private UUID safeUuidString(String s) {
+    private static UUID safeUuid(String s) {
         if (s == null) return null;
         final String v = s.trim();
         if (v.isEmpty()) return null;
@@ -223,5 +232,11 @@ public final class YamlTeamStorage implements TeamStorage {
         } catch (IllegalArgumentException ex) {
             return null;
         }
+    }
+
+    private static String normalizeName(String nameRaw) {
+        if (nameRaw == null) return "Team";
+        String n = nameRaw.trim().replaceAll("\\s{2,}", " ");
+        return n.isBlank() ? "Team" : n;
     }
 }

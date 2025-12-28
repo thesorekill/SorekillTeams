@@ -20,7 +20,18 @@ import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.permissions.PermissionAttachmentInfo;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class SimpleTeamService implements TeamService {
@@ -41,9 +52,9 @@ public final class SimpleTeamService implements TeamService {
     private final Map<UUID, Set<UUID>> spyTargets = new ConcurrentHashMap<>();
 
     public SimpleTeamService(SorekillTeamsPlugin plugin, TeamStorage storage) {
-        this.plugin = plugin;
-        this.storage = storage;
-        this.invites = plugin.invites();
+        this.plugin = Objects.requireNonNull(plugin, "plugin");
+        this.storage = Objects.requireNonNull(storage, "storage");
+        this.invites = Objects.requireNonNull(plugin.invites(), "invites");
     }
 
     // =========================
@@ -85,7 +96,7 @@ public final class SimpleTeamService implements TeamService {
     public Optional<Team> getTeamByPlayer(UUID player) {
         if (player == null) return Optional.empty();
         UUID id = playerToTeam.get(player);
-        return id == null ? Optional.empty() : Optional.ofNullable(teams.get(id));
+        return (id == null) ? Optional.empty() : Optional.ofNullable(teams.get(id));
     }
 
     @Override
@@ -101,8 +112,11 @@ public final class SimpleTeamService implements TeamService {
         if (norm.isBlank()) return Optional.empty();
 
         for (Team t : teams.values()) {
-            if (t == null || t.getName() == null) continue;
-            if (normalizeForCompare(t.getName()).equals(norm)) return Optional.of(t);
+            if (t == null) continue;
+            String n = t.getName();
+            if (n == null) continue;
+
+            if (normalizeForCompare(n).equals(norm)) return Optional.of(t);
         }
         return Optional.empty();
     }
@@ -114,8 +128,9 @@ public final class SimpleTeamService implements TeamService {
     @Override
     public Team createTeam(UUID owner, String name) {
         if (owner == null) throw new TeamServiceException(TeamError.INVALID_PLAYER, "invalid_player");
-        if (playerToTeam.containsKey(owner))
+        if (playerToTeam.containsKey(owner)) {
             throw new TeamServiceException(TeamError.ALREADY_IN_TEAM, "team_already_in_team");
+        }
 
         final String cleanName = normalizeTeamNameOrThrow(name);
 
@@ -143,8 +158,9 @@ public final class SimpleTeamService implements TeamService {
         Team t = getTeamByPlayer(owner).orElseThrow(() ->
                 new TeamServiceException(TeamError.NOT_IN_TEAM, "team_not_in_team"));
 
-        if (!t.getOwner().equals(owner))
+        if (!t.getOwner().equals(owner)) {
             throw new TeamServiceException(TeamError.NOT_OWNER, "team_not_owner");
+        }
 
         broadcastToTeam(t, plugin.msg().format(
                 "team_team_disbanded",
@@ -172,7 +188,6 @@ public final class SimpleTeamService implements TeamService {
 
         playerToTeam.remove(player);
         teamChatToggled.remove(player);
-
         invites.clearTarget(player);
 
         safeSave();
@@ -186,10 +201,12 @@ public final class SimpleTeamService implements TeamService {
 
     @Override
     public void invite(UUID inviter, UUID invitee) {
-        if (inviter == null || invitee == null)
+        if (inviter == null || invitee == null) {
             throw new TeamServiceException(TeamError.INVALID_PLAYER, "invalid_player");
-        if (inviter.equals(invitee))
+        }
+        if (inviter.equals(invitee)) {
             throw new TeamServiceException(TeamError.INVITE_SELF, "team_invite_self");
+        }
 
         Team t = getTeamByPlayer(inviter).orElseThrow(() ->
                 new TeamServiceException(TeamError.NOT_IN_TEAM, "team_not_in_team"));
@@ -203,10 +220,12 @@ public final class SimpleTeamService implements TeamService {
             throw new TeamServiceException(TeamError.TEAM_FULL, "team_team_full");
         }
 
-        if (t.isMember(invitee))
+        if (t.isMember(invitee)) {
             throw new TeamServiceException(TeamError.ALREADY_MEMBER, "team_already_member");
-        if (playerToTeam.containsKey(invitee))
+        }
+        if (playerToTeam.containsKey(invitee)) {
             throw new TeamServiceException(TeamError.INVITEE_IN_TEAM, "team_invitee_in_team");
+        }
 
         long now = System.currentTimeMillis();
 
@@ -224,10 +243,8 @@ public final class SimpleTeamService implements TeamService {
         }
 
         boolean allowMultiTeams = plugin.getConfig().getBoolean("invites.allow_multiple_from_different_teams", true);
-        if (!allowMultiTeams) {
-            if (invites.hasInviteFromOtherTeam(invitee, t.getId(), now)) {
-                throw new TeamServiceException(TeamError.INVITE_ONLY_ONE_TEAM, "team_invite_only_one_team");
-            }
+        if (!allowMultiTeams && invites.hasInviteFromOtherTeam(invitee, t.getId(), now)) {
+            throw new TeamServiceException(TeamError.INVITE_ONLY_ONE_TEAM, "team_invite_only_one_team");
         }
 
         // cooldown
@@ -260,9 +277,7 @@ public final class SimpleTeamService implements TeamService {
         boolean refreshOnReinvite = plugin.getConfig().getBoolean("invites.reinvite_refreshes_expiry", true);
         if (refreshOnReinvite) {
             boolean refreshed = invites.refresh(invitee, t.getId(), inv, now);
-            if (refreshed) {
-                return;
-            }
+            if (refreshed) return;
         }
 
         boolean created = invites.create(inv, now);
@@ -284,15 +299,15 @@ public final class SimpleTeamService implements TeamService {
             throw new TeamServiceException(TeamError.ALREADY_IN_TEAM, "team_already_in_team");
         }
 
-        TeamInvite inv;
-
+        final TeamInvite inv;
         if (teamId != null && teamId.isPresent()) {
             UUID id = teamId.get();
             inv = invites.get(invitee, id, now).orElse(null);
             if (inv == null) return Optional.empty();
         } else {
-            if (active.size() > 1)
+            if (active.size() > 1) {
                 throw new TeamServiceException(TeamError.MULTIPLE_INVITES, "team_multiple_invites_hint");
+            }
             inv = active.get(0);
         }
 
@@ -346,11 +361,13 @@ public final class SimpleTeamService implements TeamService {
 
         if (teamId != null && teamId.isPresent()) {
             return invites.remove(invitee, teamId.get());
-        } else {
-            if (active.size() > 1)
-                throw new TeamServiceException(TeamError.MULTIPLE_INVITES, "team_multiple_invites_hint");
-            return invites.remove(invitee, active.get(0).getTeamId());
         }
+
+        if (active.size() > 1) {
+            throw new TeamServiceException(TeamError.MULTIPLE_INVITES, "team_multiple_invites_hint");
+        }
+
+        return invites.remove(invitee, active.get(0).getTeamId());
     }
 
     @Override
@@ -370,19 +387,23 @@ public final class SimpleTeamService implements TeamService {
 
     @Override
     public void kickMember(UUID owner, UUID member) {
-        if (owner == null || member == null)
+        if (owner == null || member == null) {
             throw new TeamServiceException(TeamError.INVALID_PLAYER, "invalid_player");
+        }
 
         Team t = getTeamByPlayer(owner).orElseThrow(() ->
                 new TeamServiceException(TeamError.NOT_IN_TEAM, "team_not_in_team"));
 
-        if (!t.getOwner().equals(owner))
+        if (!t.getOwner().equals(owner)) {
             throw new TeamServiceException(TeamError.NOT_OWNER, "team_not_owner");
+        }
 
-        if (member.equals(t.getOwner()))
+        if (member.equals(t.getOwner())) {
             throw new TeamServiceException(TeamError.CANNOT_KICK_OWNER, "team_cannot_kick_owner");
-        if (!t.isMember(member))
+        }
+        if (!t.isMember(member)) {
             throw new TeamServiceException(TeamError.TARGET_NOT_MEMBER, "team_target_not_member");
+        }
 
         t.getMembers().remove(member);
         ensureOwnerInMembers(t);
@@ -390,7 +411,6 @@ public final class SimpleTeamService implements TeamService {
 
         playerToTeam.remove(member);
         teamChatToggled.remove(member);
-
         invites.clearTarget(member);
 
         safeSave();
@@ -404,19 +424,23 @@ public final class SimpleTeamService implements TeamService {
 
     @Override
     public void transferOwnership(UUID owner, UUID newOwner) {
-        if (owner == null || newOwner == null)
+        if (owner == null || newOwner == null) {
             throw new TeamServiceException(TeamError.INVALID_PLAYER, "invalid_player");
+        }
 
         Team t = getTeamByPlayer(owner).orElseThrow(() ->
                 new TeamServiceException(TeamError.NOT_IN_TEAM, "team_not_in_team"));
 
-        if (!t.getOwner().equals(owner))
+        if (!t.getOwner().equals(owner)) {
             throw new TeamServiceException(TeamError.NOT_OWNER, "team_not_owner");
+        }
 
-        if (owner.equals(newOwner))
+        if (owner.equals(newOwner)) {
             throw new TeamServiceException(TeamError.TRANSFER_SELF, "team_transfer_self");
-        if (!t.isMember(newOwner))
+        }
+        if (!t.isMember(newOwner)) {
             throw new TeamServiceException(TeamError.TARGET_NOT_MEMBER, "team_target_not_member");
+        }
 
         t.setOwner(newOwner);
         ensureOwnerInMembers(t);
@@ -433,14 +457,16 @@ public final class SimpleTeamService implements TeamService {
 
     @Override
     public void renameTeam(UUID owner, String newName) {
-        if (owner == null)
+        if (owner == null) {
             throw new TeamServiceException(TeamError.INVALID_PLAYER, "invalid_player");
+        }
 
         Team t = getTeamByPlayer(owner).orElseThrow(() ->
                 new TeamServiceException(TeamError.NOT_IN_TEAM, "team_not_in_team"));
 
-        if (!t.getOwner().equals(owner))
+        if (!t.getOwner().equals(owner)) {
             throw new TeamServiceException(TeamError.NOT_OWNER, "team_not_owner");
+        }
 
         String cleaned = normalizeTeamNameOrThrow(newName);
 
@@ -523,7 +549,6 @@ public final class SimpleTeamService implements TeamService {
         );
 
         broadcastToTeam(team, out);
-
         broadcastToSpy(team, sender.getUniqueId(), sender.getName(), Msg.color(msg));
     }
 
@@ -683,7 +708,6 @@ public final class SimpleTeamService implements TeamService {
 
         playerToTeam.remove(player);
         teamChatToggled.remove(player);
-
         invites.clearTarget(player);
 
         safeSave();
@@ -753,44 +777,58 @@ public final class SimpleTeamService implements TeamService {
 
     private void ensureOwnerInMembers(Team t) {
         if (t == null) return;
-        if (t.getOwner() == null) return;
-        if (!t.getMembers().contains(t.getOwner())) {
-            t.getMembers().add(t.getOwner());
+        UUID owner = t.getOwner();
+        if (owner == null) return;
+
+        if (!t.getMembers().contains(owner)) {
+            t.getMembers().add(owner);
         }
     }
 
     private void dedupeMembers(Team t) {
         if (t == null) return;
+
         LinkedHashSet<UUID> set = new LinkedHashSet<>();
         for (UUID u : t.getMembers()) {
             if (u != null) set.add(u);
         }
+
         t.getMembers().clear();
         t.getMembers().addAll(set);
     }
 
     private int uniqueMemberCount(Team t) {
         if (t == null) return 0;
+
         LinkedHashSet<UUID> set = new LinkedHashSet<>();
         for (UUID u : t.getMembers()) {
             if (u != null) set.add(u);
         }
-        if (t.getOwner() != null) set.add(t.getOwner());
+        UUID owner = t.getOwner();
+        if (owner != null) set.add(owner);
+
         return set.size();
     }
 
     private String normalizeTeamNameOrThrow(String name) {
-        if (name == null) throw new TeamServiceException(TeamError.INVALID_TEAM_NAME, "team_invalid_name");
+        if (name == null) {
+            throw new TeamServiceException(TeamError.INVALID_TEAM_NAME, "team_invalid_name");
+        }
         String cleaned = name.trim().replaceAll("\\s{2,}", " ");
-        if (cleaned.isBlank()) throw new TeamServiceException(TeamError.INVALID_TEAM_NAME, "team_invalid_name");
+        if (cleaned.isBlank()) {
+            throw new TeamServiceException(TeamError.INVALID_TEAM_NAME, "team_invalid_name");
+        }
         return cleaned;
     }
 
     private boolean teamNameTaken(String cleanedName) {
         String norm = normalizeForCompare(cleanedName);
         for (Team t : teams.values()) {
-            if (t == null || t.getName() == null) continue;
-            if (normalizeForCompare(t.getName()).equals(norm)) return true;
+            if (t == null) continue;
+            String n = t.getName();
+            if (n == null) continue;
+
+            if (normalizeForCompare(n).equals(norm)) return true;
         }
         return false;
     }
@@ -798,9 +836,14 @@ public final class SimpleTeamService implements TeamService {
     private boolean teamNameTakenByOtherTeam(String cleanedName, UUID ourTeamId) {
         String norm = normalizeForCompare(cleanedName);
         for (Team t : teams.values()) {
-            if (t == null || t.getId() == null || t.getName() == null) continue;
-            if (ourTeamId != null && ourTeamId.equals(t.getId())) continue;
-            if (normalizeForCompare(t.getName()).equals(norm)) return true;
+            if (t == null) continue;
+
+            UUID id = t.getId();
+            String n = t.getName();
+            if (id == null || n == null) continue;
+
+            if (ourTeamId != null && ourTeamId.equals(id)) continue;
+            if (normalizeForCompare(n).equals(norm)) return true;
         }
         return false;
     }
@@ -812,26 +855,29 @@ public final class SimpleTeamService implements TeamService {
 
     private int getTeamMaxMembers(Team team) {
         int def = Math.max(1, plugin.getConfig().getInt("teams.max_members_default", 4));
-        if (team == null || team.getOwner() == null) return def;
+        if (team == null) return def;
 
-        Player ownerOnline = Bukkit.getPlayer(team.getOwner());
+        UUID owner = team.getOwner();
+        if (owner == null) return def;
+
+        Player ownerOnline = Bukkit.getPlayer(owner);
         if (ownerOnline == null) return def;
 
         int best = def;
 
         for (PermissionAttachmentInfo pai : ownerOnline.getEffectivePermissions()) {
             if (pai == null || !pai.getValue()) continue;
+
             String perm = pai.getPermission();
-            if (perm == null) continue;
-            if (!perm.startsWith(MAX_PERM_PREFIX)) continue;
+            if (perm == null || !perm.startsWith(MAX_PERM_PREFIX)) continue;
 
             String num = perm.substring(MAX_PERM_PREFIX.length()).trim();
             if (num.isEmpty()) continue;
 
             try {
                 int n = Integer.parseInt(num);
-                if (n >= 1 && n <= 200) {
-                    if (n > best) best = n;
+                if (n >= 1 && n <= 200 && n > best) {
+                    best = n;
                 }
             } catch (NumberFormatException ignored) {
             }

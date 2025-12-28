@@ -13,6 +13,8 @@ package net.chumbucket.sorekillteams.util;
 import net.chumbucket.sorekillteams.SorekillTeamsPlugin;
 import org.bukkit.Bukkit;
 
+import java.util.HashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -21,8 +23,11 @@ public final class TeamNameValidator {
 
     private final SorekillTeamsPlugin plugin;
 
-    // Safety: strip any &X style codes when making a plain name
+    // Strips any &x pair (including color/bold/reset)
     private static final Pattern ANY_AMP_CODE = Pattern.compile("(?i)&.");
+
+    // Used to sanitize the allowed_plain config before building a regex character class
+    private static final Pattern DISALLOWED_IN_CHARCLASS = Pattern.compile("[^a-zA-Z0-9_\\-\\\\]");
 
     public TeamNameValidator(SorekillTeamsPlugin plugin) {
         this.plugin = plugin;
@@ -31,22 +36,23 @@ public final class TeamNameValidator {
     public record Validation(boolean ok, String reasonKey, String coloredName, String plainName) {}
 
     public Validation validate(String input) {
-        if (input == null) return new Validation(false, "team_name_invalid", "", "");
+        if (input == null) return invalid("team_name_invalid");
 
         String raw = input.trim();
+        if (raw.isEmpty()) return invalid("team_name_invalid");
 
-        // -------- 1) Validate formatting codes (ONLY &0-&f colors + optional &l bold + optional &r reset) --------
+        // -------- 1) Validate formatting codes --------
         boolean allowColors = plugin.getConfig().getBoolean("teams.name.allow_color_codes", true);
         boolean allowBold = plugin.getConfig().getBoolean("teams.name.allow_bold", true);
         boolean allowReset = plugin.getConfig().getBoolean("teams.name.allow_reset", true);
 
         if (allowColors) {
-            // Block hex style (&#RRGGBB) explicitly
+            // block hex like &#RRGGBB
             if (raw.toLowerCase(Locale.ROOT).contains("&#")) {
-                return new Validation(false, "team_name_invalid", "", "");
+                return invalid("team_name_invalid");
             }
 
-            // Walk all &<code> usages; reject anything not allowed (blocks &o italics, &k magic, &m, &n, etc.)
+            // validate every &<code>
             for (int i = 0; i < raw.length() - 1; i++) {
                 if (raw.charAt(i) != '&') continue;
 
@@ -57,44 +63,56 @@ public final class TeamNameValidator {
                         (allowBold && c == 'l') ||
                         (allowReset && c == 'r');
 
-                if (!ok) {
-                    return new Validation(false, "team_name_invalid", "", "");
-                }
+                if (!ok) return invalid("team_name_invalid");
             }
         } else {
-            // No formatting allowed at all
-            if (raw.contains("&")) {
-                return new Validation(false, "team_name_invalid", "", "");
-            }
+            if (raw.indexOf('&') >= 0) return invalid("team_name_invalid");
         }
 
-        // -------- 2) Plain name checks (length + allowed characters) --------
+        // -------- 2) Plain name checks --------
         String plain = stripAmpCodes(raw).trim();
+        if (plain.isEmpty()) return invalid("team_name_invalid");
 
-        int min = plugin.getConfig().getInt("teams.name.min_length", 3);
-        int max = plugin.getConfig().getInt("teams.name.max_length", 16);
+        int min = Math.max(1, plugin.getConfig().getInt("teams.name.min_length", 3));
+        int max = Math.max(min, plugin.getConfig().getInt("teams.name.max_length", 16));
         if (plain.length() < min || plain.length() > max) {
-            return new Validation(false, "team_name_invalid", "", "");
+            return invalid("team_name_invalid");
         }
 
-        String allowedPlain = plugin.getConfig().getString("teams.name.allowed_plain", "a-zA-Z0-9_");
-        Pattern plainPattern = Pattern.compile("^[" + allowedPlain + "]+$");
-        if (!plainPattern.matcher(plain).matches()) {
-            return new Validation(false, "team_name_invalid", "", "");
+        Pattern plainPattern = buildAllowedPlainPattern();
+        if (plainPattern != null && !plainPattern.matcher(plain).matches()) {
+            return invalid("team_name_invalid");
         }
 
         // -------- 3) Reserved / group-name conflict checks --------
         if (isReservedOrTooClose(plain)) {
-            return new Validation(false, "team_name_reserved", "", "");
+            return invalid("team_name_reserved");
         }
 
-        // Keep the original raw for storage/display; callers can Msg.color(raw) when sending to players.
         return new Validation(true, "", raw, plain);
     }
 
+    private Validation invalid(String key) {
+        return new Validation(false, key, "", "");
+    }
+
     private static String stripAmpCodes(String s) {
-        // strips any &x pairs (including color/bold/reset)
-        return ANY_AMP_CODE.matcher(s).replaceAll("");
+        return ANY_AMP_CODE.matcher(s == null ? "" : s).replaceAll("");
+    }
+
+    private Pattern buildAllowedPlainPattern() {
+        String allowedPlain = plugin.getConfig().getString("teams.name.allowed_plain", "a-zA-Z0-9_");
+        if (allowedPlain == null) allowedPlain = "a-zA-Z0-9_";
+        allowedPlain = allowedPlain.trim();
+        if (allowedPlain.isEmpty()) allowedPlain = "a-zA-Z0-9_";
+
+        allowedPlain = DISALLOWED_IN_CHARCLASS.matcher(allowedPlain).replaceAll("");
+
+        try {
+            return Pattern.compile("^[" + allowedPlain + "]+$");
+        } catch (Exception ignored) {
+            return null; // fail-open
+        }
     }
 
     private boolean isReservedOrTooClose(String plainName) {
@@ -102,13 +120,18 @@ public final class TeamNameValidator {
 
         // Config reserved names
         if (plugin.getConfig().getBoolean("teams.reserved_names.enabled", true)) {
-            for (String r : plugin.getConfig().getStringList("teams.reserved_names.list")) {
-                if (tooClose(norm, normalize(r))) return true;
+            List<String> reserved = plugin.getConfig().getStringList("teams.reserved_names.list");
+            if (reserved != null) {
+                for (String r : reserved) {
+                    if (r == null) continue;
+                    if (tooClose(norm, normalize(r))) return true;
+                }
             }
         }
 
-        // LuckPerms groups (optional) via reflection (no compile-time dependency)
+        // LuckPerms groups (optional)
         for (String groupName : LuckPermsCompat.tryGetGroupNames()) {
+            if (groupName == null) continue;
             if (tooClose(norm, normalize(groupName))) return true;
         }
 
@@ -116,12 +139,18 @@ public final class TeamNameValidator {
     }
 
     private boolean tooClose(String a, String b) {
+        if (a == null || b == null) return false;
         if (a.isBlank() || b.isBlank()) return false;
 
+        // exact
         if (a.equalsIgnoreCase(b)) return true;
+
+        // contains (kept, since you already wanted “close”)
         if (a.contains(b) || b.contains(a)) return true;
 
-        int maxDist = plugin.getConfig().getInt("teams.reserved_match.levenshtein_distance", 2);
+        int maxDist = Math.max(0, plugin.getConfig().getInt("teams.reserved_match.levenshtein_distance", 2));
+        if (maxDist == 0) return false;
+
         return levenshtein(a, b) <= maxDist;
     }
 
@@ -130,15 +159,25 @@ public final class TeamNameValidator {
     }
 
     private static int levenshtein(String a, String b) {
-        int[] prev = new int[b.length() + 1];
-        int[] curr = new int[b.length() + 1];
+        if (a == null) a = "";
+        if (b == null) b = "";
 
-        for (int j = 0; j <= b.length(); j++) prev[j] = j;
+        int alen = a.length();
+        int blen = b.length();
 
-        for (int i = 1; i <= a.length(); i++) {
+        if (alen == 0) return blen;
+        if (blen == 0) return alen;
+
+        int[] prev = new int[blen + 1];
+        int[] curr = new int[blen + 1];
+
+        for (int j = 0; j <= blen; j++) prev[j] = j;
+
+        for (int i = 1; i <= alen; i++) {
             curr[0] = i;
-            for (int j = 1; j <= b.length(); j++) {
-                int cost = (a.charAt(i - 1) == b.charAt(j - 1)) ? 0 : 1;
+            char ca = a.charAt(i - 1);
+            for (int j = 1; j <= blen; j++) {
+                int cost = (ca == b.charAt(j - 1)) ? 0 : 1;
                 curr[j] = Math.min(
                         Math.min(curr[j - 1] + 1, prev[j] + 1),
                         prev[j - 1] + cost
@@ -146,49 +185,44 @@ public final class TeamNameValidator {
             }
             int[] tmp = prev; prev = curr; curr = tmp;
         }
-        return prev[b.length()];
+        return prev[blen];
     }
 
     /**
-     * Optional LuckPerms compatibility without compile-time dependency.
-     * Pulls loaded group names from the LuckPerms API via Bukkit ServicesManager.
+     * LuckPerms compatibility via reflection with LuckPermsProvider.get().
+     * Much more reliable than ServicesManager registration in practice.
      */
     private static final class LuckPermsCompat {
         private static final String LP_PLUGIN_NAME = "LuckPerms";
-        private static final String LP_API_CLASS = "net.luckperms.api.LuckPerms";
+        private static final String LP_PROVIDER_CLASS = "net.luckperms.api.LuckPermsProvider";
 
         static Set<String> tryGetGroupNames() {
             try {
                 if (Bukkit.getPluginManager().getPlugin(LP_PLUGIN_NAME) == null) return Set.of();
 
-                Class<?> luckPermsClass = Class.forName(LP_API_CLASS);
+                Class<?> providerClass = Class.forName(LP_PROVIDER_CLASS);
 
-                // ServicesManager#getRegistration(Class)
-                Object reg = Bukkit.getServicesManager()
-                        .getClass()
-                        .getMethod("getRegistration", Class.class)
-                        .invoke(Bukkit.getServicesManager(), luckPermsClass);
+                // LuckPerms api = LuckPermsProvider.get();
+                Object api = providerClass.getMethod("get").invoke(null);
+                if (api == null) return Set.of();
 
-                if (reg == null) return Set.of();
-
-                Object provider = reg.getClass().getMethod("getProvider").invoke(reg);
-                if (provider == null) return Set.of();
-
-                // provider.getGroupManager()
-                Object groupManager = provider.getClass().getMethod("getGroupManager").invoke(provider);
+                Object groupManager = api.getClass().getMethod("getGroupManager").invoke(api);
                 if (groupManager == null) return Set.of();
 
-                // groupManager.getLoadedGroups()
                 Object groups = groupManager.getClass().getMethod("getLoadedGroups").invoke(groupManager);
                 if (!(groups instanceof Iterable<?> it)) return Set.of();
 
-                java.util.HashSet<String> names = new java.util.HashSet<>();
+                HashSet<String> names = new HashSet<>();
                 for (Object g : it) {
                     if (g == null) continue;
                     Object nameObj = g.getClass().getMethod("getName").invoke(g);
-                    if (nameObj != null) names.add(nameObj.toString());
+                    if (nameObj != null) {
+                        String s = nameObj.toString();
+                        if (!s.isBlank()) names.add(s);
+                    }
                 }
-                return names;
+
+                return names.isEmpty() ? Set.of() : names;
             } catch (Throwable ignored) {
                 return Set.of();
             }

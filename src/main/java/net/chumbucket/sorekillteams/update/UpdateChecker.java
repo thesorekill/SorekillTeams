@@ -26,18 +26,19 @@ import java.util.regex.Pattern;
 
 public final class UpdateChecker {
 
-    public record Result(boolean success,
-                         boolean updateAvailable,
-                         String currentVersion,
-                         String latestVersion,
-                         String url,
-                         String error) {}
+    public record Result(
+            boolean success,
+            boolean updateAvailable,
+            String currentVersion,
+            String latestVersion,
+            String url,
+            String error
+    ) {}
 
-    private final SorekillTeamsPlugin plugin;
-    private final HttpClient http;
-
-    // store last result so join listener can notify ops
-    private final AtomicReference<Result> lastResult = new AtomicReference<>();
+    private static final String CFG_ENABLED = "update_checker.enabled";
+    private static final String CFG_HISTORY_URL = "update_checker.spigot.history_url";
+    private static final String CFG_RESOURCE_ID = "update_checker.spigot.resource_id";
+    private static final String CFG_SLUG = "update_checker.spigot.slug";
 
     // Version table text contains: "1.1.1 Dec 23, 2025 at 4:05 PM"
     private static final Pattern TABLE_VERSION = Pattern.compile(
@@ -47,6 +48,12 @@ public final class UpdateChecker {
 
     // Generic semver-ish token matcher
     private static final Pattern ANY_VERSION = Pattern.compile("\\b([0-9]+(?:\\.[0-9]+){0,2})\\b");
+
+    private final SorekillTeamsPlugin plugin;
+    private final HttpClient http;
+
+    // store last result so join listener can notify ops
+    private final AtomicReference<Result> lastResult = new AtomicReference<>();
 
     public UpdateChecker(SorekillTeamsPlugin plugin) {
         this.plugin = plugin;
@@ -61,7 +68,7 @@ public final class UpdateChecker {
     }
 
     public void checkNowAsync() {
-        if (!plugin.getConfig().getBoolean("update_checker.enabled", true)) return;
+        if (!plugin.getConfig().getBoolean(CFG_ENABLED, true)) return;
 
         final String url = resolveHistoryUrl();
         if (url.isBlank()) {
@@ -98,7 +105,7 @@ public final class UpdateChecker {
     }
 
     private Result checkSpigot(String historyUrl) {
-        String current = normalizeVersion(plugin.getDescription().getVersion());
+        final String current = normalizeVersion(plugin.getDescription().getVersion());
 
         try {
             HttpRequest req = HttpRequest.newBuilder()
@@ -128,7 +135,8 @@ public final class UpdateChecker {
 
             return new Result(true, updateAvailable, current, latest, historyUrl, "");
         } catch (Exception e) {
-            return new Result(false, false, current, "", historyUrl, e.getClass().getSimpleName() + ": " + e.getMessage());
+            return new Result(false, false, current, "", historyUrl,
+                    e.getClass().getSimpleName() + ": " + (e.getMessage() == null ? "" : e.getMessage()));
         }
     }
 
@@ -151,7 +159,6 @@ public final class UpdateChecker {
             String cand = any.group(1);
             if (cand == null || cand.isBlank()) continue;
 
-            // normalize before compare (handles "v1.2.0" cases even though regex won't catch 'v')
             String norm = normalizeVersion(cand);
             if (best.isBlank() || VersionUtil.isNewer(norm, best)) best = norm;
         }
@@ -160,23 +167,26 @@ public final class UpdateChecker {
     }
 
     private static String stripHtmlTags(String html) {
-        // fast + dependency-free (good enough for parsing)
+        // Fast + dependency-free (good enough for parsing).
+        // Also strips script/style blocks to avoid version numbers in JS/CSS.
         String s = html.replaceAll("(?is)<script.*?>.*?</script>", " ");
         s = s.replaceAll("(?is)<style.*?>.*?</style>", " ");
         s = s.replaceAll("(?is)<[^>]+>", " ");
-        return s.replace("&nbsp;", " ").replaceAll("\\s{2,}", " ").trim();
+        s = s.replace("&nbsp;", " ");
+        s = s.replaceAll("\\s{2,}", " ").trim();
+        return s;
     }
 
     private String resolveHistoryUrl() {
         // Option A (preferred): hard-set the full history URL
-        String direct = safeTrim(plugin.getConfig().getString("update_checker.spigot.history_url", ""));
+        String direct = safeTrim(plugin.getConfig().getString(CFG_HISTORY_URL, ""));
         if (!direct.isBlank()) return direct;
 
         // Option B: build from resource id (+ optional slug)
-        int id = plugin.getConfig().getInt("update_checker.spigot.resource_id", -1);
+        int id = plugin.getConfig().getInt(CFG_RESOURCE_ID, -1);
         if (id <= 0) return "";
 
-        String slug = safeTrim(plugin.getConfig().getString("update_checker.spigot.slug", "sorekillteams"));
+        String slug = safeTrim(plugin.getConfig().getString(CFG_SLUG, "sorekillteams"));
         if (slug.isBlank()) slug = "sorekillteams";
 
         return "https://www.spigotmc.org/resources/" + slug + "." + id + "/history";

@@ -10,7 +10,13 @@
 
 package net.chumbucket.sorekillteams.model;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
@@ -75,7 +81,7 @@ public final class TeamInvites {
         purgeExpired(target, nowMs);
 
         Map<UUID, TeamInvite> inner = invitesByTarget.get(target);
-        if (inner == null) return Optional.empty();
+        if (inner == null || inner.isEmpty()) return Optional.empty();
 
         TeamInvite inv = inner.get(teamId);
         if (inv == null) return Optional.empty();
@@ -134,7 +140,7 @@ public final class TeamInvites {
         if (target == null || teamId == null) return false;
 
         Map<UUID, TeamInvite> inner = invitesByTarget.get(target);
-        if (inner == null) return false;
+        if (inner == null || inner.isEmpty()) return false;
 
         TeamInvite removed = inner.remove(teamId);
         cleanupIfEmpty(target, inner);
@@ -151,15 +157,16 @@ public final class TeamInvites {
 
         int purged = 0;
 
-        // Safer than values().removeIf(...) for CHM views across forks/JDKs:
+        // Iterate entrySet and remove via CHM's conditional remove for safety.
         for (Map.Entry<UUID, TeamInvite> entry : inner.entrySet()) {
             UUID teamId = entry.getKey();
             TeamInvite inv = entry.getValue();
 
             if (teamId == null || inv == null || inv.isExpired(nowMs)) {
-                if (teamId != null && inner.remove(teamId, inv)) {
-                    purged++;
-                } else if (teamId == null) {
+                if (teamId != null) {
+                    if (inner.remove(teamId, inv)) purged++;
+                } else {
+                    // teamId should never be null, but count it if it happens.
                     purged++;
                 }
             }
@@ -172,9 +179,12 @@ public final class TeamInvites {
     /** @return number of invites purged across all targets */
     public int purgeExpiredAll(long nowMs) {
         int purged = 0;
+
+        // Snapshot keys to avoid iterator surprises during concurrent mutation
         for (UUID target : new ArrayList<>(invitesByTarget.keySet())) {
             purged += purgeExpired(target, nowMs);
         }
+
         return purged;
     }
 
@@ -202,9 +212,11 @@ public final class TeamInvites {
     /** Active pending invites for a target (after purge). */
     public int pendingForTarget(UUID target, long nowMs) {
         if (target == null) return 0;
+
         purgeExpired(target, nowMs);
+
         Map<UUID, TeamInvite> inner = invitesByTarget.get(target);
-        return inner == null ? 0 : inner.size();
+        return (inner == null) ? 0 : inner.size();
     }
 
     /** Active outgoing invites for a team across ALL targets (best-effort scan). */
@@ -212,14 +224,17 @@ public final class TeamInvites {
         if (teamId == null) return 0;
 
         int count = 0;
+
         for (UUID target : new ArrayList<>(invitesByTarget.keySet())) {
             purgeExpired(target, nowMs);
+
             Map<UUID, TeamInvite> inner = invitesByTarget.get(target);
             if (inner == null || inner.isEmpty()) continue;
 
             TeamInvite inv = inner.get(teamId);
             if (inv != null && !inv.isExpired(nowMs)) count++;
         }
+
         return count;
     }
 
@@ -228,6 +243,7 @@ public final class TeamInvites {
         if (target == null) return false;
 
         purgeExpired(target, nowMs);
+
         Map<UUID, TeamInvite> inner = invitesByTarget.get(target);
         if (inner == null || inner.isEmpty()) return false;
 
@@ -238,6 +254,7 @@ public final class TeamInvites {
             if (inv.isExpired(nowMs)) continue;
             if (teamId == null || !tid.equals(teamId)) return true;
         }
+
         return false;
     }
 
@@ -281,12 +298,12 @@ public final class TeamInvites {
         entries.sort(Comparator.comparing(e -> e.getKey().toString()));
 
         return entries.stream()
-                .map(e -> e.getKey() + ":" + (e.getValue() == null ? 0 : e.getValue().size()))
+                .map(e -> e.getKey() + ":" + ((e.getValue() == null) ? 0 : e.getValue().size()))
                 .collect(Collectors.joining(", "));
     }
 
     private void cleanupIfEmpty(UUID target, Map<UUID, TeamInvite> inner) {
         if (target == null || inner == null) return;
-        if (inner.isEmpty()) invitesByTarget.remove(target);
+        if (inner.isEmpty()) invitesByTarget.remove(target, inner);
     }
 }

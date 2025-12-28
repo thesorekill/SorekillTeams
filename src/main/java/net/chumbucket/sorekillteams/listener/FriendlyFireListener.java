@@ -45,7 +45,7 @@ public final class FriendlyFireListener implements Listener {
     // Cached reflection for PotionEffectType#isBeneficial (exists on modern versions; keep safe)
     private static final Method IS_BENEFICIAL_METHOD = resolveIsBeneficialMethod();
 
-    // Cached reflection for PotionEffectType#getKey (deprecated in some versions; we avoid compile-time call)
+    // Cached reflection for PotionEffectType#getKey (deprecated/varies by versions; avoid compile-time call)
     private static final Method EFFECTTYPE_GETKEY_METHOD = resolveEffectTypeGetKeyMethod();
 
     public FriendlyFireListener(SorekillTeamsPlugin plugin) {
@@ -61,14 +61,14 @@ public final class FriendlyFireListener implements Listener {
 
         if (!(e.getEntity() instanceof Player victim)) return;
 
-        boolean includeProjectiles = plugin.getConfig().getBoolean("friendly_fire.include_projectiles", true);
-        boolean includeClouds = plugin.getConfig().getBoolean("friendly_fire.include_area_effect_clouds", true);
-        boolean includeExplosives = plugin.getConfig().getBoolean("friendly_fire.include_explosives", true);
+        final boolean includeProjectiles = plugin.getConfig().getBoolean("friendly_fire.include_projectiles", true);
+        final boolean includeClouds = plugin.getConfig().getBoolean("friendly_fire.include_area_effect_clouds", true);
+        final boolean includeExplosives = plugin.getConfig().getBoolean("friendly_fire.include_explosives", true);
 
-        boolean includePotions = plugin.getConfig().getBoolean("friendly_fire.include_potions", true);
-        boolean includeTridents = plugin.getConfig().getBoolean("friendly_fire.include_tridents", true);
+        final boolean includePotions = plugin.getConfig().getBoolean("friendly_fire.include_potions", true);
+        final boolean includeTridents = plugin.getConfig().getBoolean("friendly_fire.include_tridents", true);
 
-        Player attacker = resolveAttacker(
+        final Player attacker = resolveAttacker(
                 e.getDamager(),
                 includeProjectiles,
                 includeClouds,
@@ -84,47 +84,51 @@ public final class FriendlyFireListener implements Listener {
         // allow self-damage
         if (attacker.getUniqueId().equals(victim.getUniqueId())) return;
 
-        TeamService teams = plugin.teams();
+        final TeamService teams = plugin.teams();
         if (teams == null) return;
 
         // Not teammates? allow
         if (!teams.areTeammates(attacker.getUniqueId(), victim.getUniqueId())) return;
 
         // Team-level override: allow teammate damage if team FF is enabled
-        Optional<Team> teamOpt = teams.getTeamByPlayer(attacker.getUniqueId());
-        if (teamOpt.isPresent() && teamOpt.get().isFriendlyFireEnabled()) return;
+        if (teams.getTeamByPlayer(attacker.getUniqueId()).map(Team::isFriendlyFireEnabled).orElse(false)) return;
 
         // 1.1.2: teammate damage scaling
-        int pct = plugin.getConfig().getInt("friendly_fire.teammate_damage", 0);
-        pct = clamp(pct, 0, 100);
+        int pct = clamp(plugin.getConfig().getInt("friendly_fire.teammate_damage", 0), 0, 100);
 
         if (pct <= 0) {
             // Block it
             e.setCancelled(true);
             maybeMessage(attacker);
 
-            plugin.debug().log("FF blocked: " + attacker.getName() + " -> " + victim.getName()
-                    + " cause=" + e.getDamager().getType()
-                    + " dmg=" + String.format(Locale.ROOT, "%.2f", e.getDamage()));
+            if (plugin.debug() != null) {
+                plugin.debug().log("FF blocked: " + attacker.getName() + " -> " + victim.getName()
+                        + " cause=" + e.getDamager().getType()
+                        + " dmg=" + String.format(Locale.ROOT, "%.2f", e.getDamage()));
+            }
             return;
         }
 
         if (pct >= 100) {
             // Allow full damage (effectively no FF reduction while global block is active)
-            plugin.debug().log("FF allowed full (pct=100): " + attacker.getName() + " -> " + victim.getName()
-                    + " cause=" + e.getDamager().getType()
-                    + " dmg=" + String.format(Locale.ROOT, "%.2f", e.getDamage()));
+            if (plugin.debug() != null) {
+                plugin.debug().log("FF allowed full (pct=100): " + attacker.getName() + " -> " + victim.getName()
+                        + " cause=" + e.getDamager().getType()
+                        + " dmg=" + String.format(Locale.ROOT, "%.2f", e.getDamage()));
+            }
             return;
         }
 
         // Reduce damage to pct%
-        double before = e.getDamage();
-        double after = before * (pct / 100.0);
+        final double before = e.getDamage();
+        final double after = before * (pct / 100.0);
         e.setDamage(after);
 
-        plugin.debug().log("FF reduced (" + pct + "%): " + attacker.getName() + " -> " + victim.getName()
-                + " cause=" + e.getDamager().getType()
-                + " dmg=" + String.format(Locale.ROOT, "%.2f", before) + " -> " + String.format(Locale.ROOT, "%.2f", after));
+        if (plugin.debug() != null) {
+            plugin.debug().log("FF reduced (" + pct + "%): " + attacker.getName() + " -> " + victim.getName()
+                    + " cause=" + e.getDamager().getType()
+                    + " dmg=" + String.format(Locale.ROOT, "%.2f", before) + " -> " + String.format(Locale.ROOT, "%.2f", after));
+        }
     }
 
     private Player resolveAttacker(Entity damager,
@@ -139,11 +143,8 @@ public final class FriendlyFireListener implements Listener {
 
         // lingering potion / AoE cloud attribution
         if (includeClouds && damager instanceof AreaEffectCloud cloud) {
-            if (includePotions) {
-                // Allow purely beneficial clouds (healing/speed/etc.)
-                if (isCloudNonAggressive(cloud)) {
-                    return null;
-                }
+            if (includePotions && isCloudNonAggressive(cloud)) {
+                return null;
             }
             ProjectileSource src = cloud.getSource();
             if (src instanceof Player p) return p;
@@ -170,7 +171,6 @@ public final class FriendlyFireListener implements Listener {
 
             // Optionally exclude tridents from projectile attribution
             if (!includeTridents) {
-                // Avoid hard dependency on a specific entity class name across forks:
                 String simple = proj.getClass().getSimpleName();
                 if (simple != null && simple.equalsIgnoreCase("Trident")) {
                     return null;
@@ -192,7 +192,7 @@ public final class FriendlyFireListener implements Listener {
     private boolean isCloudNonAggressive(AreaEffectCloud cloud) {
         if (cloud == null) return true;
 
-        // Correct API: custom effects
+        // Custom effects
         if (!isAllEffectsBeneficial(cloud.getCustomEffects())) {
             return false;
         }

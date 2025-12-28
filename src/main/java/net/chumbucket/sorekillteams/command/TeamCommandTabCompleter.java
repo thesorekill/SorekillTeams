@@ -36,13 +36,13 @@ public final class TeamCommandTabCompleter implements TabCompleter {
         if (!(sender instanceof Player p)) return List.of();
         if (!p.hasPermission("sorekillteams.use")) return List.of();
 
-        if (args.length == 0) return List.of();
+        if (args == null || args.length == 0) return List.of();
 
         if (args.length == 1) {
             return partial(args[0], subcommandsFor(p));
         }
 
-        String sub = safeLower(args[0]);
+        final String sub = safeLower(args[0]);
 
         // -------------------------
         // team chat toggle
@@ -180,7 +180,10 @@ public final class TeamCommandTabCompleter implements TabCompleter {
             if (p.hasPermission("sorekillteams.delhome")) subs.add("delhome");
         }
 
-        return subs.stream().distinct().sorted(String.CASE_INSENSITIVE_ORDER).toList();
+        return subs.stream()
+                .distinct()
+                .sorted(String.CASE_INSENSITIVE_ORDER)
+                .toList();
     }
 
     private boolean isTeamChatEnabledInConfig() {
@@ -269,7 +272,12 @@ public final class TeamCommandTabCompleter implements TabCompleter {
         if (player == null) return List.of();
         if (plugin.teamHomes() == null) return List.of();
 
-        Team team = plugin.teams().getTeamByPlayer(player).orElse(null);
+        Team team;
+        try {
+            team = plugin.teams().getTeamByPlayer(player).orElse(null);
+        } catch (Exception ignored) {
+            return List.of();
+        }
         if (team == null) return List.of();
 
         try {
@@ -292,7 +300,10 @@ public final class TeamCommandTabCompleter implements TabCompleter {
     private List<String> partial(String token, Collection<String> options) {
         if (options == null || options.isEmpty()) return List.of();
 
-        String t = token == null ? "" : token.toLowerCase(Locale.ROOT);
+        // ✅ Fix: when completing multi-word args, only match against the last token typed
+        // Example: "/team spy My T" should match teams starting with "t", not "my t"
+        final String lastToken = lastToken(token);
+        final String t = (lastToken == null ? "" : lastToken.toLowerCase(Locale.ROOT));
 
         return options.stream()
                 .filter(s -> s != null && !s.isBlank())
@@ -307,7 +318,14 @@ public final class TeamCommandTabCompleter implements TabCompleter {
 
     private static String joinFrom(String[] args, int startIndex) {
         if (args == null || args.length <= startIndex) return "";
-        String joined = String.join(" ", Arrays.copyOfRange(args, startIndex, args.length)).trim();
-        return joined;
+        return String.join(" ", Arrays.copyOfRange(args, startIndex, args.length)).trim();
+    }
+
+    private static String lastToken(String joined) {
+        if (joined == null) return "";
+        String s = joined.trim();
+        if (s.isEmpty()) return "";
+        int idx = s.lastIndexOf(' ');
+        return (idx < 0) ? s : s.substring(idx + 1);
     }
 }

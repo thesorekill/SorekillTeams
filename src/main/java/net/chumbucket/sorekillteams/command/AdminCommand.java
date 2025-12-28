@@ -14,6 +14,7 @@ import net.chumbucket.sorekillteams.SorekillTeamsPlugin;
 import net.chumbucket.sorekillteams.model.Team;
 import net.chumbucket.sorekillteams.util.Msg;
 import org.bukkit.Bukkit;
+import org.bukkit.OfflinePlayer;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -29,6 +30,14 @@ public final class AdminCommand implements CommandExecutor {
 
     private final SorekillTeamsPlugin plugin;
 
+    private static final String PERM_ADMIN = "sorekillteams.admin";
+    private static final String PERM_RELOAD = "sorekillteams.admin.reload";
+    private static final String PERM_VERSION = "sorekillteams.admin.version";
+    private static final String PERM_DISBAND = "sorekillteams.admin.disband";
+    private static final String PERM_SETOWNER = "sorekillteams.admin.setowner";
+    private static final String PERM_KICK = "sorekillteams.admin.kick";
+    private static final String PERM_INFO = "sorekillteams.admin.info";
+
     private static final DateTimeFormatter TEAM_CREATED_FMT =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm z").withZone(ZoneId.systemDefault());
 
@@ -39,8 +48,8 @@ public final class AdminCommand implements CommandExecutor {
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
 
-        // Base admin gate (umbrella node)
-        if (!sender.hasPermission("sorekillteams.admin")) {
+        // Umbrella admin gate
+        if (!sender.hasPermission(PERM_ADMIN)) {
             plugin.msg().send(sender, "no_permission");
             return true;
         }
@@ -52,13 +61,15 @@ public final class AdminCommand implements CommandExecutor {
             return true;
         }
 
-        final boolean debug = plugin.getConfig().getBoolean("chat.debug", false);
-        final String sub = args[0].toLowerCase(Locale.ROOT);
+        final boolean debug = plugin.getConfig().getBoolean("admin.debug",
+                plugin.getConfig().getBoolean("chat.debug", false));
+
+        final String sub = (args[0] == null ? "" : args[0]).toLowerCase(Locale.ROOT);
 
         try {
             switch (sub) {
                 case "reload", "rl", "r" -> {
-                    if (!requirePerm(sender, "sorekillteams.admin.reload")) return true;
+                    if (!requirePerm(sender, PERM_RELOAD)) return true;
 
                     if (debug) plugin.getLogger().info("[ADMIN-DBG] reload by " + sender.getName());
                     plugin.reloadEverything();
@@ -67,7 +78,7 @@ public final class AdminCommand implements CommandExecutor {
                 }
 
                 case "version", "ver", "v" -> {
-                    if (!requirePerm(sender, "sorekillteams.admin.version")) return true;
+                    if (!requirePerm(sender, PERM_VERSION)) return true;
 
                     if (debug) plugin.getLogger().info("[ADMIN-DBG] version by " + sender.getName());
                     plugin.msg().send(sender, "version", "{version}", plugin.getDescription().getVersion());
@@ -75,9 +86,8 @@ public final class AdminCommand implements CommandExecutor {
                 }
 
                 case "disband" -> {
-                    if (!requirePerm(sender, "sorekillteams.admin.disband")) return true;
+                    if (!requirePerm(sender, PERM_DISBAND)) return true;
 
-                    // ✅ 1.1.3: respect admin safety toggle
                     if (!plugin.getConfig().getBoolean("admin.allow_force_disband", true)) {
                         plugin.msg().send(sender, "admin_action_disabled");
                         return true;
@@ -89,7 +99,8 @@ public final class AdminCommand implements CommandExecutor {
                         return true;
                     }
 
-                    String teamName = joinArgsAfter(args, 0);
+                    // FIX: join args after subcommand (index 1), not index 0
+                    String teamName = joinFrom(args, 1);
                     Team t = plugin.teams().getTeamByName(teamName).orElse(null);
                     if (t == null) {
                         sender.sendMessage(Msg.color(plugin.msg().prefix()
@@ -106,9 +117,8 @@ public final class AdminCommand implements CommandExecutor {
                 }
 
                 case "setowner" -> {
-                    if (!requirePerm(sender, "sorekillteams.admin.setowner")) return true;
+                    if (!requirePerm(sender, PERM_SETOWNER)) return true;
 
-                    // ✅ 1.1.3: respect admin safety toggle
                     if (!plugin.getConfig().getBoolean("admin.allow_set_owner", true)) {
                         plugin.msg().send(sender, "admin_action_disabled");
                         return true;
@@ -121,7 +131,7 @@ public final class AdminCommand implements CommandExecutor {
                     }
 
                     String targetToken = args[args.length - 1];
-                    String teamName = String.join(" ", Arrays.copyOfRange(args, 1, args.length - 1)).trim();
+                    String teamName = joinFrom(args, 1, args.length - 1);
 
                     Team t = plugin.teams().getTeamByName(teamName).orElse(null);
                     if (t == null) {
@@ -132,6 +142,8 @@ public final class AdminCommand implements CommandExecutor {
 
                     UUID newOwner = resolvePlayerUuidOnlineOrUuid(targetToken);
                     if (newOwner == null) {
+                        // If you want, swap this to your messages.yml key:
+                        // team_player_must_be_online_or_uuid
                         sender.sendMessage(Msg.color(plugin.msg().prefix()
                                 + "&cPlayer must be online or a UUID: &f" + targetToken));
                         return true;
@@ -146,9 +158,8 @@ public final class AdminCommand implements CommandExecutor {
                 }
 
                 case "kick" -> {
-                    if (!requirePerm(sender, "sorekillteams.admin.kick")) return true;
+                    if (!requirePerm(sender, PERM_KICK)) return true;
 
-                    // ✅ 1.1.3: respect admin safety toggle
                     if (!plugin.getConfig().getBoolean("admin.allow_force_kick", true)) {
                         plugin.msg().send(sender, "admin_action_disabled");
                         return true;
@@ -184,7 +195,7 @@ public final class AdminCommand implements CommandExecutor {
                 }
 
                 case "info" -> {
-                    if (!requirePerm(sender, "sorekillteams.admin.info")) return true;
+                    if (!requirePerm(sender, PERM_INFO)) return true;
 
                     if (args.length < 2) {
                         sender.sendMessage(Msg.color(plugin.msg().prefix()
@@ -192,7 +203,8 @@ public final class AdminCommand implements CommandExecutor {
                         return true;
                     }
 
-                    String teamName = joinArgsAfter(args, 0);
+                    // FIX: join args after subcommand (index 1), not index 0
+                    String teamName = joinFrom(args, 1);
                     Team t = plugin.teams().getTeamByName(teamName).orElse(null);
                     if (t == null) {
                         sender.sendMessage(Msg.color(plugin.msg().prefix()
@@ -230,11 +242,21 @@ public final class AdminCommand implements CommandExecutor {
     private void sendTeamInfo(CommandSender sender, Team t) {
         String ownerName = nameOf(t.getOwner());
 
-        String members = t.getMembers().stream()
-                .filter(Objects::nonNull)
+        // Unique, non-null members
+        LinkedHashSet<UUID> uniqueMembers = new LinkedHashSet<>();
+        for (UUID u : t.getMembers()) {
+            if (u != null) uniqueMembers.add(u);
+        }
+        if (t.getOwner() != null) uniqueMembers.add(t.getOwner());
+
+        String members = uniqueMembers.stream()
                 .map(uuid -> {
                     Player online = Bukkit.getPlayer(uuid);
                     if (online != null) return Msg.color("&a" + online.getName());
+
+                    String offName = offlineNameOf(uuid);
+                    if (offName != null && !offName.isBlank()) return Msg.color("&c" + offName);
+
                     return Msg.color("&c" + uuid.toString().substring(0, 8));
                 })
                 .sorted(String.CASE_INSENSITIVE_ORDER)
@@ -246,7 +268,7 @@ public final class AdminCommand implements CommandExecutor {
         sender.sendMessage(Msg.color(plugin.msg().prefix() + "&8&m-----&r &cTeam Info &8&m-----"));
         sender.sendMessage(Msg.color(plugin.msg().prefix() + "&fTeam: &c" + t.getName()));
         sender.sendMessage(Msg.color(plugin.msg().prefix() + "&fOwner: &c" + ownerName));
-        sender.sendMessage(Msg.color(plugin.msg().prefix() + "&fMembers (&c" + t.getMembers().size() + "&f): " + members));
+        sender.sendMessage(Msg.color(plugin.msg().prefix() + "&fMembers (&c" + uniqueMembers.size() + "&f): " + members));
         sender.sendMessage(Msg.color(plugin.msg().prefix() + "&fCreated: &c" + created));
         sender.sendMessage(Msg.color(plugin.msg().prefix() + "&fTeam friendly fire: " + Msg.color(ffState)));
         sender.sendMessage(Msg.color(plugin.msg().prefix() + "&7Legend: &aOnline &7/ &cOffline"));
@@ -255,11 +277,13 @@ public final class AdminCommand implements CommandExecutor {
     private UUID resolvePlayerUuidOnlineOrUuid(String arg) {
         if (arg == null || arg.isBlank()) return null;
 
+        // UUID first
         try {
-            return UUID.fromString(arg);
+            return UUID.fromString(arg.trim());
         } catch (IllegalArgumentException ignored) {}
 
-        Player online = Bukkit.getPlayerExact(arg);
+        // then online exact name
+        Player online = Bukkit.getPlayerExact(arg.trim());
         if (online != null) return online.getUniqueId();
 
         return null;
@@ -271,13 +295,32 @@ public final class AdminCommand implements CommandExecutor {
         Player online = Bukkit.getPlayer(uuid);
         if (online != null) return online.getName();
 
+        String off = offlineNameOf(uuid);
+        if (off != null && !off.isBlank()) return off;
+
         return uuid.toString().substring(0, 8);
     }
 
-    private String joinArgsAfter(String[] args, int indexOfSubcommand) {
-        int start = Math.max(0, indexOfSubcommand + 1);
+    private String offlineNameOf(UUID uuid) {
+        try {
+            OfflinePlayer off = Bukkit.getOfflinePlayer(uuid);
+            return off == null ? null : off.getName();
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private static String joinFrom(String[] args, int startInclusive) {
+        return joinFrom(args, startInclusive, args == null ? 0 : args.length);
+    }
+
+    private static String joinFrom(String[] args, int startInclusive, int endExclusive) {
+        if (args == null || args.length == 0) return "";
+        int start = Math.max(0, startInclusive);
+        int end = Math.min(args.length, Math.max(start, endExclusive));
+
         StringBuilder sb = new StringBuilder();
-        for (int i = start; i < args.length; i++) {
+        for (int i = start; i < end; i++) {
             if (args[i] == null) continue;
             String s = args[i].trim();
             if (s.isEmpty()) continue;

@@ -55,7 +55,7 @@ public final class TeamChatCommand implements CommandExecutor {
         try {
             // One-off message: /tc <message...>
             if (args.length > 0) {
-                String msg = String.join(" ", args).trim();
+                final String msg = String.join(" ", args).trim();
                 if (msg.isEmpty()) return true;
 
                 if (debug) {
@@ -76,11 +76,13 @@ public final class TeamChatCommand implements CommandExecutor {
             // Require being in a team to toggle
             if (plugin.teams().getTeamByPlayer(p.getUniqueId()).isEmpty()) {
                 plugin.msg().send(p, "team_not_in_team");
-                if (debug) plugin.getLogger().info("[TC-DBG] toggle blocked (not in team) for " + p.getName());
+                if (debug) {
+                    plugin.getLogger().info("[TC-DBG] toggle blocked (not in team) for " + p.getName());
+                }
                 return true;
             }
 
-            boolean nowOn = plugin.teams().toggleTeamChat(p.getUniqueId());
+            final boolean nowOn = plugin.teams().toggleTeamChat(p.getUniqueId());
 
             if (debug) {
                 plugin.getLogger().info("[TC-DBG] " + p.getName() + " toggled -> " + (nowOn ? "ON" : "OFF"));
@@ -100,7 +102,8 @@ public final class TeamChatCommand implements CommandExecutor {
 
         } catch (Exception ex) {
             p.sendMessage(plugin.msg().prefix() + "An error occurred.");
-            plugin.getLogger().severe("TeamChat command error: " + ex.getClass().getSimpleName() + ": " + ex.getMessage());
+            plugin.getLogger().severe("TeamChat command error: " +
+                    ex.getClass().getSimpleName() + ": " + ex.getMessage());
             return true;
         }
     }

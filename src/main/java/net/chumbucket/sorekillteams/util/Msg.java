@@ -26,8 +26,8 @@ public final class Msg {
     private String cachedPrefixRaw = "&8[&bTeams&8]&r ";
     private String cachedPrefix = ChatColor.translateAlternateColorCodes('&', cachedPrefixRaw);
 
-    // If true, missing keys fall back to the key string (useful for dev)
-    private boolean debugMissingKeys = true;
+    // If true, missing keys fall back to the key string (dev only)
+    private boolean debugMissingKeys = false;
 
     public Msg(SorekillTeamsPlugin plugin) {
         this.plugin = plugin;
@@ -51,9 +51,8 @@ public final class Msg {
         this.cachedPrefixRaw = p;
         this.cachedPrefix = color(p);
 
-        // Optional: messages.yml toggle:
-        // debug_missing_keys: false
-        this.debugMissingKeys = messages != null && messages.getBoolean("debug_missing_keys", true);
+        // dev toggle
+        this.debugMissingKeys = messages != null && messages.getBoolean("debug_missing_keys", false);
     }
 
     public String raw(String key) {
@@ -63,8 +62,7 @@ public final class Msg {
 
     public boolean hasKey(String key) {
         if (messages == null || key == null) return false;
-        String s = messages.getString(key, null);
-        return s != null && !s.isBlank();
+        return messages.contains(key);
     }
 
     /** Already colored prefix, cached on reload() */
@@ -72,45 +70,45 @@ public final class Msg {
         return cachedPrefix;
     }
 
-    /** Formats message; missing/blank -> "" unless debug_missing_keys=true */
+    /**
+     * Formats message. Rules:
+     * - missing key -> null (or prefix+key if debugMissingKeys=true)
+     * - blank string ("") -> null (DISABLED)
+     */
     public String format(String key) {
         String s = raw(key);
-        if (s == null || s.isBlank()) {
-            return debugMissingKeys ? (prefix() + key) : "";
+
+        // missing
+        if (s == null) {
+            return debugMissingKeys ? (prefix() + key) : null;
         }
 
-        // Replace with raw &-prefix, then color once at the end
-        s = s.replace("{prefix}", cachedPrefixRaw);
-        return color(s);
-    }
-
-    /** Formats message with placeholder pairs; missing/blank -> "" unless debug_missing_keys=true */
-    public String format(String key, String... pairs) {
-        String s = raw(key);
-        if (s == null || s.isBlank()) {
-            return debugMissingKeys ? (prefix() + key) : "";
+        // explicitly disabled
+        if (s.isBlank()) {
+            return null;
         }
 
         s = s.replace("{prefix}", cachedPrefixRaw);
-
-        if (pairs != null) {
-            for (int i = 0; i + 1 < pairs.length; i += 2) {
-                String from = pairs[i] == null ? "" : pairs[i];
-                String to = pairs[i + 1] == null ? "" : pairs[i + 1];
-                s = s.replace(from, to);
-            }
-        }
-
         return color(s);
     }
 
     /**
-     * Strict formatter: returns null if key missing/blank.
-     * Useful when you truly want "no message" instead of a fallback.
+     * Formats message with placeholder pairs.
+     * - missing key -> null (or prefix+key if debugMissingKeys=true)
+     * - blank string ("") -> null (DISABLED)
      */
-    public String formatOrNull(String key, String... pairs) {
+    public String format(String key, String... pairs) {
         String s = raw(key);
-        if (s == null || s.isBlank()) return null;
+
+        // missing
+        if (s == null) {
+            return debugMissingKeys ? (prefix() + key) : null;
+        }
+
+        // explicitly disabled
+        if (s.isBlank()) {
+            return null;
+        }
 
         s = s.replace("{prefix}", cachedPrefixRaw);
 
@@ -128,14 +126,14 @@ public final class Msg {
     public void send(CommandSender to, String key) {
         if (to == null) return;
         String msg = format(key);
-        if (msg == null || msg.isBlank()) return;
+        if (msg == null) return; // disabled or missing
         to.sendMessage(msg);
     }
 
     public void send(CommandSender to, String key, String... pairs) {
         if (to == null) return;
         String msg = format(key, pairs);
-        if (msg == null || msg.isBlank()) return;
+        if (msg == null) return; // disabled or missing
         to.sendMessage(msg);
     }
 

@@ -20,6 +20,8 @@ import java.util.UUID;
 
 public final class TeamHome {
 
+    private static final String DEFAULT_SERVER = "default";
+
     private final UUID teamId;
 
     // stored normalized key (lowercase)
@@ -29,8 +31,11 @@ public final class TeamHome {
     private final String displayName;
 
     private final String world;
-    private final double x, y, z;
-    private final float yaw, pitch;
+    private final double x;
+    private final double y;
+    private final double z;
+    private final float yaw;
+    private final float pitch;
 
     private final long createdAtMs;
     private final UUID createdBy;
@@ -48,26 +53,30 @@ public final class TeamHome {
                     UUID createdBy,
                     String serverName) {
 
-        this.teamId = teamId;
+        this.teamId = Objects.requireNonNull(teamId, "teamId");
 
-        String norm = normalize(name);
+        final String norm = normalizeKey(name);
         this.name = norm;
-        this.displayName = (displayName == null || displayName.isBlank()) ? norm : displayName.trim();
+        this.displayName = sanitizeDisplayName(displayName, norm);
 
-        this.world = world == null ? "" : world.trim();
+        this.world = sanitizeWorld(world);
         this.x = x;
         this.y = y;
         this.z = z;
         this.yaw = yaw;
         this.pitch = pitch;
 
-        this.createdAtMs = createdAtMs;
-        this.createdBy = createdBy;
-        this.serverName = serverName == null ? "" : serverName.trim();
+        this.createdAtMs = createdAtMs > 0 ? createdAtMs : System.currentTimeMillis();
+        this.createdBy = createdBy; // nullable is fine (older data / console, etc.)
+        this.serverName = sanitizeServer(serverName);
     }
 
     public UUID getTeamId() { return teamId; }
+
+    /** Normalized key (what commands should match against). */
     public String getName() { return name; }
+
+    /** Pretty name (what you show to players). */
     public String getDisplayName() { return displayName; }
 
     public String getWorld() { return world; }
@@ -79,18 +88,38 @@ public final class TeamHome {
 
     public long getCreatedAtMs() { return createdAtMs; }
     public UUID getCreatedBy() { return createdBy; }
+
     public String getServerName() { return serverName; }
 
     public Location toLocationOrNull() {
-        if (world == null || world.isBlank()) return null;
-        World w = Bukkit.getWorld(world);
+        if (world.isBlank()) return null;
+
+        final World w = Bukkit.getWorld(world);
         if (w == null) return null;
+
         return new Location(w, x, y, z, yaw, pitch);
     }
 
-    private static String normalize(String s) {
+    private static String normalizeKey(String s) {
         if (s == null) return "";
         return s.trim().toLowerCase(Locale.ROOT).replaceAll("\\s{2,}", " ");
+    }
+
+    private static String sanitizeDisplayName(String displayName, String fallback) {
+        if (displayName == null) return fallback;
+        final String cleaned = displayName.trim().replaceAll("\\s{2,}", " ");
+        return cleaned.isBlank() ? fallback : cleaned;
+    }
+
+    private static String sanitizeWorld(String world) {
+        if (world == null) return "";
+        return world.trim();
+    }
+
+    private static String sanitizeServer(String serverName) {
+        if (serverName == null) return DEFAULT_SERVER;
+        final String cleaned = serverName.trim();
+        return cleaned.isBlank() ? DEFAULT_SERVER : cleaned;
     }
 
     @Override

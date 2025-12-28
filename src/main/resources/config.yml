@@ -1,58 +1,78 @@
-# =========================
+# ============================================================================
 # SorekillTeams - config.yml
-# =========================
+# ============================================================================
 # Plugin: https://github.com/thesorekill/SorekillTeams
 #
-# Notes:
-# - Most settings have sensible defaults. Only change what you need.
-# - If you break YAML formatting, the plugin may fail to load. Keep indentation consistent.
+# YAML tips:
+# - Indentation matters (use spaces, not tabs)
+# - Strings with special characters (&, :, #) should be in quotes
+# ============================================================================
 
+
+# ----------------------------------------------------------------------------
+# Update Checker
+# ----------------------------------------------------------------------------
+# Checks Spigot for the latest version and:
+# - logs to console if you're outdated
+# - optionally notifies ops/admins when they join
 update_checker:
   enabled: true
 
   spigot:
-    # Option A: easiest (exact page you linked)
     history_url: "https://www.spigotmc.org/resources/sorekillteams.131034/history"
 
-    # Option B: build URL (don’t set history_url if you use this)
-    # resource_id: 131034
-    # slug: "sorekillteams"
-
+  # If true, players with permission "sorekillteams.admin" get notified on join
   notify_ops_on_join: true
 
+
+# ----------------------------------------------------------------------------
+# Storage
+# ----------------------------------------------------------------------------
+# How teams/homes are persisted to disk.
 storage:
-  # Storage backend (currently: yaml)
+  # Storage backend type (currently: yaml)
   type: yaml
 
-  # How often team data is saved to disk (seconds)
+  # Autosave interval (seconds). Set to 0 to disable autosave.
   autosave_seconds: 60
 
-  # 1.0.8+ (recommended): safer writes to reduce corruption risk on crash
-  # If enabled, the plugin writes to a temp file first, then replaces the original.
+  # Safer writes (writes teams.yml.tmp first, then replaces teams.yml)
+  # Helps avoid corruption on crash.
   atomic_writes: true
 
-  # 1.0.8+ (recommended): keep the last N backups when saving (0 disables)
+  # Keep the last N backups when saving (0 disables backups)
   keep_backups: 3
 
+
+# ----------------------------------------------------------------------------
+# Team Rules
+# ----------------------------------------------------------------------------
 teams:
-  # Default max members if owner doesn't have a sorekillteams.max.<n> permission
+  # Default team size cap if the owner does NOT have a permission like:
+  #   sorekillteams.max.5
+  #   sorekillteams.max.10
   max_members_default: 4
 
-  # Team name rules
+  # Team name validation rules
   name:
+    # Plain name length (after stripping formatting codes)
     min_length: 3
     max_length: 16
 
-    # Allowed characters (regex character class, without the surrounding brackets [])
+    # Allowed characters for the plain name (regex character class, no brackets)
     # Example: "a-zA-Z0-9_" allows letters, numbers, underscore
     allowed_plain: "a-zA-Z0-9_"
 
-    # Formatting options (only applies if you allow color codes)
+    # Formatting codes (applies only if allow_color_codes=true)
+    # NOTE: Your validator currently allows:
+    # - &0 - &9, &a - &f (colors)
+    # - &l (bold) if allow_bold=true
+    # - &r (reset) if allow_reset=true
     allow_color_codes: true
     allow_bold: true
     allow_reset: true
 
-  # Block certain names (case-insensitive)
+  # Block reserved names (case-insensitive) [could be useful to block curse words]
   reserved_names:
     enabled: true
     list:
@@ -63,121 +83,182 @@ teams:
       - "vip"
       - "default"
 
-  # Prevent look-alike reserved names (Levenshtein distance)
-  # Example: "adm1n" could be blocked if within distance
+  # Prevent look-alike reserved names using Levenshtein distance
+  # Example: "adm1n" could be blocked if within this distance of "admin"
+  # Controls how strict it is on checking if it looks alike
   reserved_match:
     levenshtein_distance: 2
 
+# ----------------------------------------------------------------------------
+# Team Menus (Every menu is configurable in menus.yml)
+# ----------------------------------------------------------------------------
+menus:
+  # Master switch for all GUI menus
+  enabled: true
+
+  # If true, running "/team" with no arguments opens the team menu
+  # (Commands like "/team info", "/team invite", etc. are unaffected)
+  open_on_team_command_no_args: true
+
+  # If true, registers "/team menu" as a shortcut to open the GUI
+  enable_team_menu_subcommand: true
+# ----------------------------------------------------------------------------
+# Invites
+# ----------------------------------------------------------------------------
+# Controls how inviting/accepting/denying works.
 invites:
-  # How long invites last (seconds)
+  # How long invites last before expiring (seconds)
   expiry_seconds: 300
 
-  # Invite cooldown per inviter (seconds)
+  # Cooldown per inviter between sending invites (seconds)
   cooldown_seconds: 10
 
-  # How often the plugin purges expired invites (seconds)
+  # How often expired invites are purged from memory (seconds)
   purge_seconds: 60
 
-  # 1.0.8+ anti-spam controls
+  # Anti-spam controls
   # Max pending invites a player can have at one time
   max_pending_per_player: 5
 
   # Max outgoing pending invites a team can have at one time
   max_outgoing_per_team: 10
 
-  # If false, a player can only have invites from one team at a time
+  # If false, a player can only have invites from ONE team at a time
   allow_multiple_from_different_teams: true
 
-  # If true and a player has multiple invites, force specifying which team to accept:
-  # /team accept <team>
+  # If true and a player has multiple invites:
+  # you require specifying which invite to accept:
+  #   /team accept <team>
   accept_requires_team_id_when_multiple: true
 
-  # 1.1.0: if a team re-invites the same player while an invite is still pending,
-  # refresh the expiry instead of creating a duplicate invite.
+  # If true, re-inviting a player refreshes the expiry instead of creating a duplicate
   reinvite_refreshes_expiry: true
 
+
+# ----------------------------------------------------------------------------
+# Team Chat
+# ----------------------------------------------------------------------------
+# Provides:
+# - /tc command
+# - /team chat toggle mode (routes normal chat to team chat)
+# - spy mode (admins can watch a team's chat)
 chat:
-  # Master switch for all team chat features (toggle + spy + /tc if you have it)
+  # Master switch for ALL team chat functionality
   enabled: true
 
-  # Team chat display format.
-  # Tokens: {team} {player} {message}
+  # Format for team chat messages
+  # Tokens:
+  #   {team}    team name
+  #   {player}  sender name
+  #   {message} message content
   format: "&8&l(&c&l{team}&8&l) &f{player} &8&l> &c{message}"
 
-  # Allow /team chat toggle mode (so normal chat routes to team)
+  # If true, players can toggle "team chat mode" so their normal chat goes to team chat
   toggle_enabled: true
 
-  # 1.1.0: if true, players default to team-chat mode on join (recommended: false)
+  # If true, players start in team-chat mode on join (usually annoying; default false)
   default_on_join: false
 
+  # Enables debug logs for team chat interception/sending
   debug: false
 
   spy:
-    # Admin spy on team chat messages
+    # If true, spy feature is enabled (permission + watch list still required)
     enabled: true
 
+    # Format for spy messages
     # Tokens: {team} {player} {message}
     format: "&8[&cTEAM SPY&8] &8(&c{team}&8) &f{player}&8: &7{message}"
 
+
+# ----------------------------------------------------------------------------
+# Friendly Fire
+# ----------------------------------------------------------------------------
+# Controls teammate damage prevention/reduction.
 friendly_fire:
   # Global friendly fire switch:
-  # - true  = do NOT interfere (teammates can hurt each other normally)
-  # - false = plugin enforces teammate rules below
+  # - true  => plugin does NOT interfere (teammates hurt normally)
+  # - false => plugin ENFORCES teammate rules (block/scale below)
   enabled: false
 
-  # When enabled=false and the attacker+victim are teammates AND team FF is OFF:
+  # If true, players can toggle "friendly fire" for their team.
+  toggle_enabled: true
+
+  # When enabled=false and attacker+victim are teammates AND that team's FF is OFF:
   # How much damage should go through (0-100)?
-  # - 0   = fully block teammate damage (classic "no friendly fire")
-  # - 1-99 = scale damage (e.g., 25 = quarter damage)
-  # - 100 = full damage (effectively no reduction)
+  # - 0     = fully block teammate damage (classic no-friendly-fire)
+  # - 1-99  = reduce damage (e.g., 25 = 25% damage)
+  # - 100   = full damage (basically no reduction)
   teammate_damage: 0
 
-  # Whether to include certain damage sources when blocking/scaling is active
+  # Damage sources to include when FF enforcement is active (enabled=false)
   include_projectiles: true
   include_area_effect_clouds: true
   include_explosives: true
 
   # Additional sources
-  include_potions: true     # splash + lingering potion damage (harmful only; beneficial ignored)
+  # - Potions: only harmful effects count as "attack" (beneficial are ignored)
+  include_potions: true
   include_tridents: true
 
-  # Optional: extra logging for friendly fire decisions
-  # debug: false
-
+  # Optional feedback message when a hit is blocked
   message:
     enabled: true
     cooldown_ms: 1000
 
+
+# ----------------------------------------------------------------------------
+# Team Homes
+# ----------------------------------------------------------------------------
+# Shared homes per team (requires homes.enabled=true in plugin wiring).
 homes:
   enabled: true
 
-  # Max homes unless player has permission overrides (if implemented)
+  # Max homes allowed per team (unless you later add permission overrides)
   max_homes: 1
 
-  # Server name used for display/metadata on networks
+  # Metadata for networks / displays (stored with each home)
   server_name: "survival"
 
-  # Warmup before teleporting (seconds)
+  # Teleport warmup time (seconds)
   warmup_seconds: 5
 
   # Cooldown between home teleports (seconds)
   cooldown_seconds: 60
 
-  # 1.0.8+ future-proofing for proxy networks (no effect unless implemented)
+  # Future proxy/network mode toggle (no effect unless implemented)
   proxy_mode: false
 
-  # If true, prevent using homes created on a different server_name (when proxy_mode is used)
+  # If proxy_mode is used:
+  # prevent using a home created on a different server_name
   restrict_to_same_server: true
 
+
+# ----------------------------------------------------------------------------
+# Admin Safety Toggles
+# ----------------------------------------------------------------------------
+# Lets you “turn off” destructive admin actions without removing the command.
 admin:
-  # 1.1.0: Safety toggles for destructive admin actions
   allow_force_disband: true
   allow_set_owner: true
   allow_force_kick: true
 
+
+# ----------------------------------------------------------------------------
+# Integrations
+# ----------------------------------------------------------------------------
 integrations:
+  # If PlaceholderAPI is installed, allow expansions (if you implement them)
   placeholderapi: true
+
+  # If MiniPlaceholders is installed, allow placeholders (if you implement them)
   miniplaceholders: true
 
+
+# ----------------------------------------------------------------------------
+# File Names
+# ----------------------------------------------------------------------------
 files:
+  # The file loaded by Msg.java for messages (prefix + message keys)
   messages: "messages.yml"
+  menus: "menus.yml"

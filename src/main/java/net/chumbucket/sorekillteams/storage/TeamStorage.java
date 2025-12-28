@@ -12,7 +12,28 @@ package net.chumbucket.sorekillteams.storage;
 
 import net.chumbucket.sorekillteams.service.TeamService;
 
+/**
+ * Persistence contract for {@link TeamService}.
+ * <p>
+ * Implementations are responsible for loading and saving
+ * all team-related state (teams, members, metadata).
+ */
 public interface TeamStorage {
-    void loadAll(TeamService service);
-    void saveAll(TeamService service);
+
+    /**
+     * Load all teams into the provided service.
+     *
+     * @param service the team service to populate
+     * @throws Exception if loading fails
+     */
+    void loadAll(TeamService service) throws Exception;
+
+    /**
+     * Persist all teams from the provided service.
+     *
+     * @param service the team service to save
+     * @throws Exception if saving fails
+     */
+    void saveAll(TeamService service) throws Exception;
+
 }
