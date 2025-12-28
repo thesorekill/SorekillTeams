@@ -17,9 +17,11 @@ import net.chumbucket.sorekillteams.command.TeamCommandTabCompleter;
 import net.chumbucket.sorekillteams.listener.CreateTeamFlowListener;
 import net.chumbucket.sorekillteams.listener.FriendlyFireListener;
 import net.chumbucket.sorekillteams.listener.MainMenuListener;
+import net.chumbucket.sorekillteams.listener.SqlBackfillJoinListener;
 import net.chumbucket.sorekillteams.listener.TeamChatListener;
 import net.chumbucket.sorekillteams.listener.TeamOnlineStatusListener;
 import net.chumbucket.sorekillteams.menu.MenuRouter;
+import net.chumbucket.sorekillteams.model.Team;
 import net.chumbucket.sorekillteams.model.TeamInvites;
 import net.chumbucket.sorekillteams.placeholders.PlaceholderBridge;
 import net.chumbucket.sorekillteams.service.SimpleTeamHomeService;
@@ -30,6 +32,11 @@ import net.chumbucket.sorekillteams.storage.TeamHomeStorage;
 import net.chumbucket.sorekillteams.storage.TeamStorage;
 import net.chumbucket.sorekillteams.storage.YamlTeamHomeStorage;
 import net.chumbucket.sorekillteams.storage.YamlTeamStorage;
+import net.chumbucket.sorekillteams.storage.sql.SqlDatabase;
+import net.chumbucket.sorekillteams.storage.sql.SqlDialect;
+import net.chumbucket.sorekillteams.storage.sql.SqlTeamHomeStorage;
+import net.chumbucket.sorekillteams.storage.sql.SqlTeamStorage;
+import net.chumbucket.sorekillteams.storage.sql.YamlToSqlMigrator;
 import net.chumbucket.sorekillteams.update.UpdateChecker;
 import net.chumbucket.sorekillteams.update.UpdateNotifyListener;
 import net.chumbucket.sorekillteams.util.Actionbar;
@@ -38,32 +45,35 @@ import net.chumbucket.sorekillteams.util.Menus;
 import net.chumbucket.sorekillteams.util.Msg;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.PluginCommand;
+import org.bukkit.configuration.ConfigurationSection;
+import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
+import java.util.Collection;
+import java.util.Locale;
+import java.util.Objects;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class SorekillTeamsPlugin extends JavaPlugin {
 
     private Msg msg;
-    private Menus menus; // menus.yml loader
+    private Menus menus;
     private Actionbar actionbar;
     private Debug debug;
 
-    // GUI router/executor
     private MenuRouter menuRouter;
 
-    // Placeholders bridge (PAPI + MiniPlaceholders)
     private PlaceholderBridge placeholderBridge;
 
     private TeamStorage storage;
     private TeamService teams;
 
-    // Team homes
     private TeamHomeStorage teamHomeStorage;
     private TeamHomeService teamHomes;
 
-    // Invite store (in-memory)
     private final TeamInvites invites = new TeamInvites();
 
     private UpdateChecker updateChecker;
@@ -72,14 +82,18 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     private int invitePurgeTaskId = -1;
     private int autosaveTaskId = -1;
 
-    // Prevent overlapping saves
     private final AtomicBoolean saveInFlight = new AtomicBoolean(false);
+
+    private boolean placeholdersHooked = false;
+
+    private SqlDatabase sqlDb;
+    private SqlDialect sqlDialect;
+    private String storageTypeActive = "yaml";
 
     @Override
     public void onEnable() {
         saveDefaultConfig();
 
-        // ensure resources exist
         saveResourceIfMissing(getMessagesFileNameSafe());
         saveResourceIfMissing(getMenusFileNameSafe());
 
@@ -88,20 +102,21 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         this.actionbar = new Actionbar(this);
         this.debug = new Debug(this);
 
-        // GUI
         this.menuRouter = new MenuRouter(this);
 
-        // Placeholders (no hard dependencies)
-        this.placeholderBridge = new PlaceholderBridge(this);
-        this.placeholderBridge.hookAll();
+        ensurePlaceholdersHooked();
 
-        this.storage = new YamlTeamStorage(this);
-        this.teams = new SimpleTeamService(this, storage);
+        try {
+            wireStorageFromConfig(true);
+        } catch (Exception e) {
+            getLogger().severe("Failed to initialize storage backend. Disabling plugin to prevent data loss.");
+            getLogger().severe("Reason: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+            getServer().getPluginManager().disablePlugin(this);
+            return;
+        }
 
-        // Homes (team)
         syncHomesWiringFromConfig(true);
 
-        // Load teams (fail-safe)
         try {
             storage.loadAll(teams);
         } catch (Exception e) {
@@ -111,23 +126,18 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             return;
         }
 
-        // Load homes (best-effort)
         loadHomesBestEffort("startup");
 
-        // Commands
         registerCommand("sorekillteams", new AdminCommand(this));
         registerCommand("team", new TeamCommand(this));
-        registerCommand("tc", new TeamChatCommand(this)); // /tc
+        registerCommand("tc", new TeamChatCommand(this));
 
-        // Tab completion
         registerTabCompleter("team", new TeamCommandTabCompleter(this));
 
-        // Listeners (core)
         getServer().getPluginManager().registerEvents(new FriendlyFireListener(this), this);
         getServer().getPluginManager().registerEvents(new TeamChatListener(this), this);
         getServer().getPluginManager().registerEvents(new TeamOnlineStatusListener(this), this);
-
-        // Menu listeners
+        getServer().getPluginManager().registerEvents(new SqlBackfillJoinListener(this), this);
         getServer().getPluginManager().registerEvents(new MainMenuListener(this), this);
         getServer().getPluginManager().registerEvents(new CreateTeamFlowListener(this), this);
 
@@ -136,7 +146,7 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
         syncUpdateCheckerWithConfig();
 
-        getLogger().info("SorekillTeams enabled.");
+        getLogger().info("SorekillTeams enabled. Storage=" + storageTypeActive);
     }
 
     @Override
@@ -147,13 +157,13 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         stopTask(autosaveTaskId);
         autosaveTaskId = -1;
 
-        // best-effort final save
         trySaveNowSync("shutdown");
 
-        // best-effort unhook
         if (placeholderBridge != null) {
             placeholderBridge.unhookAll();
         }
+
+        stopSql();
 
         getLogger().info("SorekillTeams disabled.");
     }
@@ -161,47 +171,35 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     public void reloadEverything() {
         reloadConfig();
 
-        // ensure resources exist (in case user deleted)
         saveResourceIfMissing(getMessagesFileNameSafe());
         saveResourceIfMissing(getMenusFileNameSafe());
 
         if (msg != null) {
-            try {
-                msg.reload();
-            } catch (Exception e) {
+            try { msg.reload(); }
+            catch (Exception e) {
                 getLogger().warning("Failed to reload messages: " + e.getClass().getSimpleName() + ": " + e.getMessage());
             }
-        }
+        } else msg = new Msg(this);
 
         if (menus != null) {
-            try {
-                menus.reload();
-            } catch (Exception e) {
+            try { menus.reload(); }
+            catch (Exception e) {
                 getLogger().warning("Failed to reload menus.yml: " + e.getClass().getSimpleName() + ": " + e.getMessage());
             }
-        } else {
-            menus = new Menus(this);
-        }
+        } else menus = new Menus(this);
 
-        // ensure router exists after reload
         if (menuRouter == null) menuRouter = new MenuRouter(this);
 
-        // refresh placeholder bridge (config toggles may change)
-        // NOTE: PAPI expansions persist=true; re-registering repeatedly is not useful.
-        // So we rebuild the bridge (for apply()), but only hook once per JVM lifetime.
-        if (placeholderBridge == null) {
-            placeholderBridge = new PlaceholderBridge(this);
-            placeholderBridge.hookAll();
-        } else {
-            // just rebuild resolver methods based on current server state/config
-            placeholderBridge = new PlaceholderBridge(this);
-            placeholderBridge.hookAll();
+        ensurePlaceholdersHooked();
+
+        try {
+            wireStorageFromConfig(false);
+        } catch (Exception e) {
+            getLogger().severe("Reload: failed to initialize storage backend. Keeping previous backend.");
+            getLogger().severe("Reason: " + e.getClass().getSimpleName() + ": " + e.getMessage());
         }
 
-        // Reload teams (best-effort; keep old if reload fails)
         try {
-            if (storage == null) storage = new YamlTeamStorage(this);
-
             TeamService fresh = new SimpleTeamService(this, storage);
             storage.loadAll(fresh);
             this.teams = fresh;
@@ -212,7 +210,6 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             getLogger().severe("Reason: " + e.getClass().getSimpleName() + ": " + e.getMessage());
         }
 
-        // Reload homes enabled/disabled + load file
         syncHomesWiringFromConfig(false);
         loadHomesBestEffort("reload");
 
@@ -221,13 +218,81 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
         syncUpdateCheckerWithConfig();
 
-        getLogger().info("SorekillTeams reloaded.");
+        getLogger().info("SorekillTeams reloaded. Storage=" + storageTypeActive);
     }
 
-    /**
-     * Create/clear home services based on config.
-     * @param isStartup if true, we wire without worrying about old state
-     */
+    private void ensurePlaceholdersHooked() {
+        if (placeholderBridge == null) {
+            placeholderBridge = new PlaceholderBridge(this);
+        }
+        if (!placeholdersHooked) {
+            placeholderBridge.hookAll();
+            placeholdersHooked = true;
+        }
+    }
+
+    private void wireStorageFromConfig(boolean isStartup) {
+        String type = getConfig().getString("storage.type", "yaml");
+        type = (type == null ? "yaml" : type.trim().toLowerCase(Locale.ROOT));
+        if (type.equals("postgres")) type = "postgresql";
+        if (type.equals("pg")) type = "postgresql";
+
+        if (!isStartup && type.equalsIgnoreCase(storageTypeActive)) {
+            if (teams == null && storage != null) {
+                teams = new SimpleTeamService(this, storage);
+            }
+            return;
+        }
+
+        if (type.equals("yaml")) {
+            stopSql();
+
+            this.storage = (this.storage instanceof YamlTeamStorage && !isStartup)
+                    ? this.storage
+                    : new YamlTeamStorage(this);
+
+            this.teams = new SimpleTeamService(this, storage);
+            this.storageTypeActive = "yaml";
+            this.sqlDialect = null;
+            return;
+        }
+
+        SqlDialect dialect = SqlDialect.fromStorageType(type);
+
+        stopSql();
+        this.sqlDialect = dialect;
+
+        ConfigurationSection sql = getConfig().getConfigurationSection("storage.sql");
+        if (sql == null) throw new IllegalStateException("Missing config section: storage.sql");
+
+        String prefix = sql.getString("table_prefix", "st_");
+        SqlDatabase db = new SqlDatabase(this, dialect, prefix);
+
+        db.start(sql);
+
+        try {
+            new YamlToSqlMigrator(this, db).migrateIfNeededOnStartup();
+        } catch (Exception e) {
+            stopSql();
+            throw new IllegalStateException("YAML -> SQL migration failed: " +
+                    e.getClass().getSimpleName() + ": " + e.getMessage(), e);
+        }
+
+        this.sqlDb = db;
+
+        this.storage = new SqlTeamStorage(db);
+        this.teams = new SimpleTeamService(this, storage);
+        this.storageTypeActive = type;
+    }
+
+    private void stopSql() {
+        if (sqlDb != null) {
+            try { sqlDb.stop(); } catch (Exception ignored) {}
+            sqlDb = null;
+        }
+        sqlDialect = null;
+    }
+
     private void syncHomesWiringFromConfig(boolean isStartup) {
         boolean homesEnabled = getConfig().getBoolean("homes.enabled", false);
 
@@ -237,14 +302,25 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             return;
         }
 
-        // storage
-        if (teamHomeStorage == null) {
-            teamHomeStorage = new YamlTeamHomeStorage(this);
-        }
-
-        // service
         if (teamHomes == null || !isStartup) {
             teamHomes = buildTeamHomeService();
+        }
+
+        if (storageTypeActive.equalsIgnoreCase("yaml")) {
+            if (teamHomeStorage == null || !(teamHomeStorage instanceof YamlTeamHomeStorage)) {
+                teamHomeStorage = new YamlTeamHomeStorage(this);
+            }
+            return;
+        }
+
+        if (sqlDb == null) {
+            getLogger().warning("Homes enabled but SQL DB is not initialized. Falling back to YAML homes.");
+            teamHomeStorage = new YamlTeamHomeStorage(this);
+            return;
+        }
+
+        if (teamHomeStorage == null || !(teamHomeStorage instanceof SqlTeamHomeStorage)) {
+            teamHomeStorage = new SqlTeamHomeStorage(sqlDb);
         }
     }
 
@@ -254,14 +330,115 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
     private void loadHomesBestEffort(String phase) {
         if (teamHomeStorage == null || teamHomes == null) return;
-
         try {
             teamHomeStorage.loadAll(teamHomes);
         } catch (Exception e) {
-            getLogger().warning("Failed to load team_homes.yml (" + phase + "): " +
+            getLogger().warning("Failed to load team homes (" + phase + "): " +
                     e.getClass().getSimpleName() + ": " + e.getMessage());
         }
     }
+
+    // =========================================================
+    // OPTION 3: Snapshot + membership refresh
+    // =========================================================
+
+    private final ConcurrentHashMap<UUID, Long> lastSqlMembershipCheckMs = new ConcurrentHashMap<>();
+    private final AtomicBoolean snapshotRefreshInFlight = new AtomicBoolean(false);
+    private volatile long lastSnapshotRefreshMs = 0L;
+
+    public void ensureTeamsSnapshotFreshFromSql() {
+        if ("yaml".equalsIgnoreCase(storageTypeActive)) return;
+
+        if (!(teams instanceof SimpleTeamService simple)) return;
+        if (!(storage instanceof SqlTeamStorage sqlStorage)) return;
+
+        long now = System.currentTimeMillis();
+        long ttlMs = Math.max(250L, getConfig().getLong("storage.sql_snapshot_refresh_ttl_ms", 1500L));
+        if (now - lastSnapshotRefreshMs < ttlMs) return;
+
+        if (!snapshotRefreshInFlight.compareAndSet(false, true)) return;
+
+        getServer().getScheduler().runTaskAsynchronously(this, () -> {
+            Collection<Team> loaded;
+
+            try {
+                loaded = sqlStorage.loadAllTeamsSnapshot();
+            } catch (Exception e) {
+                getLogger().warning("SQL snapshot refresh failed: " +
+                        e.getClass().getSimpleName() + ": " + e.getMessage());
+                snapshotRefreshInFlight.set(false);
+                return;
+            }
+
+            getServer().getScheduler().runTask(this, () -> {
+                try {
+                    simple.replaceTeamsSnapshot(loaded);
+                    lastSnapshotRefreshMs = System.currentTimeMillis(); // ✅ only after success
+                } finally {
+                    snapshotRefreshInFlight.set(false);
+                }
+            });
+        });
+    }
+
+    public void ensureTeamFreshFromSql(UUID playerUuid) {
+        if (playerUuid == null) return;
+
+        if ("yaml".equalsIgnoreCase(storageTypeActive)) return;
+        if (!(teams instanceof SimpleTeamService simple)) return;
+        if (!(storage instanceof SqlTeamStorage sqlStorage)) return;
+
+        long now = System.currentTimeMillis();
+        long ttlMs = Math.max(250L, getConfig().getLong("storage.sql_membership_refresh_ttl_ms", 1500L));
+
+        long last = lastSqlMembershipCheckMs.getOrDefault(playerUuid, 0L);
+        if (now - last < ttlMs) return;
+        lastSqlMembershipCheckMs.put(playerUuid, now);
+
+        getServer().getScheduler().runTaskAsynchronously(this, () -> {
+            UUID sqlTeamId = null;
+            Team loadedTeam = null;
+
+            try {
+                sqlTeamId = sqlStorage.findTeamIdForMember(playerUuid);
+
+                if (sqlTeamId != null) {
+                    loadedTeam = sqlStorage.loadTeamById(sqlTeamId);
+                    if (loadedTeam == null) sqlTeamId = null;
+                }
+            } catch (Exception e) {
+                getLogger().warning("SQL membership refresh failed for " + playerUuid + ": " +
+                        e.getClass().getSimpleName() + ": " + e.getMessage());
+                return;
+            }
+
+            UUID finalSqlTeamId = sqlTeamId;
+            Team finalLoadedTeam = loadedTeam;
+
+            getServer().getScheduler().runTask(this, () -> {
+                UUID currentCached = simple.getTeamByPlayer(playerUuid).map(Team::getId).orElse(null);
+                if (Objects.equals(currentCached, finalSqlTeamId)) return;
+
+                if (finalSqlTeamId == null) {
+                    simple.clearCachedMembership(playerUuid);
+                    return;
+                }
+
+                if (finalLoadedTeam != null) {
+                    simple.putLoadedTeam(finalLoadedTeam);
+                } else {
+                    simple.clearCachedMembership(playerUuid);
+                }
+            });
+        });
+    }
+
+    public void ensureTeamFreshFromSql(Player player) {
+        if (player == null) return;
+        ensureTeamFreshFromSql(player.getUniqueId());
+    }
+
+    // =========================================================
 
     private void registerCommand(String name, CommandExecutor executor) {
         final PluginCommand cmd = getCommand(name);
@@ -301,20 +478,16 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
     private String getMessagesFileNameSafe() {
         String v = null;
-        try {
-            v = getConfig().getString("files.messages", "messages.yml");
-        } catch (Exception ignored) {}
-        if (v == null || v.isBlank()) return "messages.yml";
-        return v.trim();
+        try { v = getConfig().getString("files.messages", "messages.yml"); }
+        catch (Exception ignored) {}
+        return (v == null || v.isBlank()) ? "messages.yml" : v.trim();
     }
 
     private String getMenusFileNameSafe() {
         String v = null;
-        try {
-            v = getConfig().getString("files.menus", "menus.yml");
-        } catch (Exception ignored) {}
-        if (v == null || v.isBlank()) return "menus.yml";
-        return v.trim();
+        try { v = getConfig().getString("files.menus", "menus.yml"); }
+        catch (Exception ignored) {}
+        return (v == null || v.isBlank()) ? "menus.yml" : v.trim();
     }
 
     private void startInvitePurgeTask() {
@@ -350,21 +523,28 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         ).getTaskId();
     }
 
+    // ✅ autosave must NOT rewrite SQL from stale caches.
     private void trySaveNowAsync(String reason) {
         if (!saveInFlight.compareAndSet(false, true)) return;
 
         try {
             TeamStorage s = this.storage;
             TeamService t = this.teams;
+
             if (s != null && t != null) {
-                s.saveAll(t);
+                if (t instanceof SimpleTeamService simple) {
+                    if (simple.isDirty()) {
+                        s.saveAll(t);
+                    }
+                } else {
+                    s.saveAll(t);
+                }
             }
 
             TeamHomeStorage hs = this.teamHomeStorage;
             TeamHomeService hv = this.teamHomes;
-            if (hs != null && hv != null) {
-                hs.saveAll(hv);
-            }
+            if (hs != null && hv != null) hs.saveAll(hv);
+
         } catch (Exception e) {
             getLogger().severe("Save failed (" + reason + "): " + e.getClass().getSimpleName() + ": " + e.getMessage());
         } finally {
@@ -378,15 +558,21 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         try {
             TeamStorage s = this.storage;
             TeamService t = this.teams;
+
             if (s != null && t != null) {
-                s.saveAll(t);
+                if (t instanceof SimpleTeamService simple) {
+                    if (simple.isDirty()) {
+                        s.saveAll(t);
+                    }
+                } else {
+                    s.saveAll(t);
+                }
             }
 
             TeamHomeStorage hs = this.teamHomeStorage;
             TeamHomeService hv = this.teamHomes;
-            if (hs != null && hv != null) {
-                hs.saveAll(hv);
-            }
+            if (hs != null && hv != null) hs.saveAll(hv);
+
         } catch (Exception e) {
             getLogger().severe("Save failed (" + reason + "): " + e.getClass().getSimpleName() + ": " + e.getMessage());
         } finally {
@@ -396,9 +582,8 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
     private void stopTask(int taskId) {
         if (taskId < 0) return;
-        try {
-            getServer().getScheduler().cancelTask(taskId);
-        } catch (Exception ignored) {}
+        try { getServer().getScheduler().cancelTask(taskId); }
+        catch (Exception ignored) {}
     }
 
     private void syncUpdateCheckerWithConfig() {
@@ -413,11 +598,8 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             getServer().getPluginManager().registerEvents(updateNotifyListener, this);
         }
 
-        if (enabled) {
-            updateChecker.checkNowAsync();
-        } else {
-            getLogger().info("UpdateChecker disabled in config.");
-        }
+        if (enabled) updateChecker.checkNowAsync();
+        else getLogger().info("UpdateChecker disabled in config.");
     }
 
     // =========================
@@ -443,14 +625,18 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
     public UpdateChecker updateChecker() { return updateChecker; }
 
-    // Team homes
     public TeamHomeService teamHomes() { return teamHomes; }
     public TeamHomeStorage teamHomeStorage() { return teamHomeStorage; }
 
-    // ----------------------------------------------------------------------------
-    // Friendly Fire config helpers
-    // ----------------------------------------------------------------------------
     public boolean isFriendlyFireToggleEnabled() {
         return getConfig().getBoolean("friendly_fire.toggle_enabled", true);
+    }
+
+    public String storageTypeActive() {
+        return storageTypeActive;
+    }
+
+    public SqlDialect sqlDialect() {
+        return sqlDialect;
     }
 }

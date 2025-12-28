@@ -34,21 +34,97 @@ update_checker:
 # ----------------------------------------------------------------------------
 # Storage
 # ----------------------------------------------------------------------------
-# How teams/homes are persisted to disk.
+# How teams/homes are persisted.
 storage:
-  # Storage backend type (currently: yaml)
+  # yaml | sqlite | h2 | mysql | mariadb | postgresql
   type: yaml
 
-  # Autosave interval (seconds). Set to 0 to disable autosave.
   autosave_seconds: 60
-
-  # Safer writes (writes teams.yml.tmp first, then replaces teams.yml)
-  # Helps avoid corruption on crash.
   atomic_writes: true
-
-  # Keep the last N backups when saving (0 disables backups)
   keep_backups: 3
 
+  sql:
+    # Network SQL (mysql/mariadb/postgresql)
+    host: "127.0.0.1"
+
+    # Use 0 to auto-pick defaults:
+    # - mysql/mariadb: 3306
+    # - postgresql: 5432
+    port: 3306
+    database: "sorekillteams"
+    username: "root"
+    password: "password"
+    use_ssl: false
+
+    # Local DB file name/path under the plugin folder (sqlite + h2 file mode)
+    # Examples:
+    # - "sorekillteams.db"
+    # - "data/sorekillteams.db"
+    # - "sorekillteams" (fine for H2)
+    file: "sorekillteams.db"
+
+    # H2 only:
+    # - file: uses `file`
+    # - memory: uses `database` as the in-memory DB name
+    h2_mode: "file"
+    h2_compatibility_mode: "MYSQL"
+
+    # Optional extra driver params appended internally to JDBC
+    # Example: "serverTimezone=UTC&useUnicode=true&characterEncoding=utf8"
+    parameters: "sslmode=require"
+
+    table_prefix: "st_"
+
+    pool:
+      maximum_pool_size: 10
+      minimum_idle: 2
+      connection_timeout_ms: 10000
+      idle_timeout_ms: 600000
+      max_lifetime_ms: 1800000
+  
+  migration:
+    enabled: true
+
+    # When should migration run?
+    # - on_startup: migrate during onEnable after SQL connects, before loading into runtime service
+    # - manual: only runs when you call a code path (future command)
+    mode: "on_startup"
+
+    # If true, migrate even if SQL already contains data (DANGEROUS)
+    force: false
+
+    # If true, after a successful migration it renames YAML files to *.migrated-backup
+    # so you don’t accidentally think YAML is still the source of truth.
+    rename_yaml_after_success: true
+
+# ----------------------------------------------------------------------------
+# Redis (Network Sync)
+# ----------------------------------------------------------------------------
+# Used for real-time cross-server updates (chat, invites, team updates, home updates).
+# SQL is the source of truth; Redis is the "notify everyone instantly" layer.
+redis:
+  enabled: false
+
+  host: "127.0.0.1"
+  port: 6379
+  password: ""
+  use_ssl: false
+
+  # Use either a single database index OR ACL users (your call)
+  database: 0
+
+  # Optional: set a client name to see connections in Redis monitoring
+  client_name: "SorekillTeams"
+
+  # Channel namespace (so multiple networks don’t collide)
+  channel_prefix: "sorekillteams"
+
+  # If you run multiple backend servers, this should be unique per server.
+  server_id: "survival-1"
+
+  # Reconnect & timeouts
+  timeout_ms: 5000
+  reconnect_delay_ms: 2000
 
 # ----------------------------------------------------------------------------
 # Team Rules

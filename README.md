@@ -6,13 +6,10 @@ Designed for modern servers and future proxy networks, SorekillTeams focuses on 
 
 ---
 
-## 🆕 Latest Release — 1.1.7
+## 🆕 Latest Release — 1.1.9
 
 ### Changelog
-- Fixed offline player head skins not rendering in menus
-- Restored correct skin loading after menu system refactor
-- Improved reliability of Paper PlayerProfile skin fetching
-- No config changes required
+- 
 
 ---
 

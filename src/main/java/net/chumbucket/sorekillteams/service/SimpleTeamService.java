@@ -20,19 +20,9 @@ import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.permissions.PermissionAttachmentInfo;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Comparator;
-import java.util.HashSet;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.Set;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class SimpleTeamService implements TeamService {
 
@@ -51,10 +41,105 @@ public final class SimpleTeamService implements TeamService {
 
     private final Map<UUID, Set<UUID>> spyTargets = new ConcurrentHashMap<>();
 
+    // ✅ Only write to SQL when THIS backend actually changed something
+    private final AtomicBoolean dirty = new AtomicBoolean(false);
+
     public SimpleTeamService(SorekillTeamsPlugin plugin, TeamStorage storage) {
         this.plugin = Objects.requireNonNull(plugin, "plugin");
         this.storage = Objects.requireNonNull(storage, "storage");
         this.invites = Objects.requireNonNull(plugin.invites(), "invites");
+    }
+
+    // =========================
+    // Dirty tracking
+    // =========================
+
+    public void markDirty() { dirty.set(true); }
+
+    public boolean isDirty() { return dirty.get(); }
+
+    public boolean consumeDirty() { return dirty.getAndSet(false); }
+
+    // =========================
+    // Cache hygiene / SQL refresh support
+    // =========================
+
+    /**
+     * ✅ FIX: actually remove cached membership mapping.
+     * (Your old version only cleared toggles/invites, leaving playerToTeam stale.)
+     */
+    public void clearCachedMembership(UUID playerUuid) {
+        if (playerUuid == null) return;
+
+        playerToTeam.remove(playerUuid);
+        teamChatToggled.remove(playerUuid);
+        invites.clearTarget(playerUuid);
+    }
+
+    /**
+     * Remove a team from local cache (used when SQL says the team no longer exists).
+     * Does NOT mark dirty (because this is cache reconciliation, not a local “change”).
+     */
+    public void evictCachedTeam(UUID teamId) {
+        if (teamId == null) return;
+
+        Team removed = teams.remove(teamId);
+        if (removed != null) {
+            for (UUID m : new HashSet<>(removed.getMembers())) {
+                if (m != null && teamId.equals(playerToTeam.get(m))) {
+                    playerToTeam.remove(m);
+                    teamChatToggled.remove(m);
+                }
+            }
+        }
+
+        inviteCooldownUntil.remove(teamId);
+        invites.clearTeam(teamId);
+        removeTeamFromAllSpyTargets(teamId);
+    }
+
+    /**
+     * Replace the entire teams snapshot from SQL.
+     * Keeps runtime-only state as much as possible, but evicts teams that no longer exist.
+     * Does NOT mark dirty.
+     */
+    public void replaceTeamsSnapshot(Collection<Team> loadedTeams) {
+        // rebuild new maps
+        Map<UUID, Team> newTeams = new HashMap<>();
+        Map<UUID, UUID> newPlayerToTeam = new HashMap<>();
+
+        if (loadedTeams != null) {
+            for (Team t : loadedTeams) {
+                if (t == null || t.getId() == null) continue;
+
+                ensureOwnerInMembers(t);
+                dedupeMembers(t);
+
+                newTeams.put(t.getId(), t);
+                for (UUID m : t.getMembers()) {
+                    if (m != null) newPlayerToTeam.put(m, t.getId());
+                }
+            }
+        }
+
+        // swap (thread-safe enough for our usage; all callers apply on main thread)
+        teams.clear();
+        teams.putAll(newTeams);
+
+        playerToTeam.clear();
+        playerToTeam.putAll(newPlayerToTeam);
+
+        // prune runtime state that no longer makes sense
+        teamChatToggled.removeIf(u -> !playerToTeam.containsKey(u));
+        spyTargets.entrySet().removeIf(e -> {
+            Set<UUID> watching = e.getValue();
+            if (watching == null) return true;
+            watching.removeIf(id -> !teams.containsKey(id));
+            return watching.isEmpty();
+        });
+
+        // IMPORTANT: snapshot loads must not mark dirty
+        dirty.set(false);
     }
 
     // =========================
@@ -71,17 +156,12 @@ public final class SimpleTeamService implements TeamService {
         for (UUID m : t.getMembers()) {
             if (m != null) playerToTeam.put(m, t.getId());
         }
+        // loading/backfill should NOT mark dirty
     }
 
     public void putAllTeams(Collection<Team> loadedTeams) {
-        teams.clear();
-        playerToTeam.clear();
-        teamChatToggled.clear();
-        inviteCooldownUntil.clear();
-        spyTargets.clear();
-
-        if (loadedTeams == null || loadedTeams.isEmpty()) return;
-        for (Team t : loadedTeams) putLoadedTeam(t);
+        // startup load can behave like replace
+        replaceTeamsSnapshot(loadedTeams);
     }
 
     public Collection<Team> allTeams() {
@@ -147,6 +227,7 @@ public final class SimpleTeamService implements TeamService {
         teams.put(id, t);
         playerToTeam.put(owner, id);
 
+        markDirty();
         safeSave();
         return t;
     }
@@ -168,6 +249,8 @@ public final class SimpleTeamService implements TeamService {
         ));
 
         internalDisbandTeam(t);
+
+        markDirty();
         safeSave();
     }
 
@@ -190,6 +273,7 @@ public final class SimpleTeamService implements TeamService {
         teamChatToggled.remove(player);
         invites.clearTarget(player);
 
+        markDirty();
         safeSave();
 
         broadcastToTeam(t, plugin.msg().format(
@@ -229,7 +313,6 @@ public final class SimpleTeamService implements TeamService {
 
         long now = System.currentTimeMillis();
 
-        // 1.1.3: anti-spam limits
         int maxPending = Math.max(1, plugin.getConfig().getInt("invites.max_pending_per_player", 5));
         int pendingNow = invites.pendingForTarget(invitee, now);
         if (pendingNow >= maxPending) {
@@ -247,7 +330,6 @@ public final class SimpleTeamService implements TeamService {
             throw new TeamServiceException(TeamError.INVITE_ONLY_ONE_TEAM, "team_invite_only_one_team");
         }
 
-        // cooldown
         int cdSeconds = Math.max(0, plugin.getConfig().getInt("invites.cooldown_seconds", 10));
         if (cdSeconds > 0) {
             long until = inviteCooldownUntil.getOrDefault(inviter, 0L);
@@ -337,6 +419,7 @@ public final class SimpleTeamService implements TeamService {
         playerToTeam.put(invitee, t.getId());
         invites.remove(invitee, inv.getTeamId());
 
+        markDirty();
         safeSave();
 
         broadcastToTeam(t, plugin.msg().format(
@@ -413,6 +496,7 @@ public final class SimpleTeamService implements TeamService {
         teamChatToggled.remove(member);
         invites.clearTarget(member);
 
+        markDirty();
         safeSave();
 
         broadcastToTeam(t, plugin.msg().format(
@@ -446,6 +530,7 @@ public final class SimpleTeamService implements TeamService {
         ensureOwnerInMembers(t);
         dedupeMembers(t);
 
+        markDirty();
         safeSave();
 
         broadcastToTeam(t, plugin.msg().format(
@@ -481,6 +566,7 @@ public final class SimpleTeamService implements TeamService {
         String old = t.getName();
         t.setName(cleaned);
 
+        markDirty();
         safeSave();
 
         broadcastToTeam(t, plugin.msg().format(
@@ -492,7 +578,7 @@ public final class SimpleTeamService implements TeamService {
     }
 
     // =========================
-    // Team chat
+    // Team chat (no persistence)
     // =========================
 
     @Override
@@ -553,7 +639,7 @@ public final class SimpleTeamService implements TeamService {
     }
 
     // =========================
-    // Spy
+    // Spy (no persistence)
     // =========================
 
     @Override
@@ -660,6 +746,8 @@ public final class SimpleTeamService implements TeamService {
         ));
 
         internalDisbandTeam(t);
+
+        markDirty();
         safeSave();
     }
 
@@ -681,6 +769,7 @@ public final class SimpleTeamService implements TeamService {
 
         playerToTeam.put(newOwner, teamId);
 
+        markDirty();
         safeSave();
 
         broadcastToTeam(t, plugin.msg().format(
@@ -710,6 +799,7 @@ public final class SimpleTeamService implements TeamService {
         teamChatToggled.remove(player);
         invites.clearTarget(player);
 
+        markDirty();
         safeSave();
 
         broadcastToTeam(t, plugin.msg().format(
@@ -768,9 +858,12 @@ public final class SimpleTeamService implements TeamService {
     }
 
     private void safeSave() {
+        if (!consumeDirty()) return;
+
         try {
             storage.saveAll(this);
         } catch (Exception e) {
+            dirty.set(true);
             plugin.getLogger().severe("Failed to save teams: " + e.getClass().getSimpleName() + ": " + e.getMessage());
         }
     }
@@ -879,8 +972,7 @@ public final class SimpleTeamService implements TeamService {
                 if (n >= 1 && n <= 200 && n > best) {
                     best = n;
                 }
-            } catch (NumberFormatException ignored) {
-            }
+            } catch (NumberFormatException ignored) {}
         }
 
         return best;

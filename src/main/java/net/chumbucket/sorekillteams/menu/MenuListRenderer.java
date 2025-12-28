@@ -110,6 +110,16 @@ public final class MenuListRenderer {
         }
 
         if (type.equals("TEAMS")) {
+
+            // ✅ IMPORTANT: make browse teams network-safe.
+            // Refresh the global SQL snapshot (TTL guarded, async DB work) before reading cache.
+            // This prevents “phantom teams” after disband on another backend.
+            try {
+                plugin.ensureTeamsSnapshotFreshFromSql();
+            } catch (Throwable ignored) {
+                // never break menu rendering
+            }
+
             List<Team> teams = new ArrayList<>();
             if (plugin.teams() instanceof SimpleTeamService sts) teams.addAll(sts.allTeams());
             teams.sort(Comparator.comparing(t -> (t.getName() == null ? "" : t.getName().toLowerCase(Locale.ROOT))));
@@ -186,7 +196,6 @@ public final class MenuListRenderer {
                     action = clickActionTemplate.replace("{member_uuid}", u.toString()).replace("{member_name}", memberName);
                 }
 
-                // ✅ key fix: if profile is fetched async, re-render THIS SLOT when ready
                 final Team teamForLore = targetTeam;
                 final String memberNameFinal = memberName;
                 final String roleFinal = role;
@@ -201,7 +210,7 @@ public final class MenuListRenderer {
                     if (top == null) return;
 
                     if (!(top.getHolder() instanceof MenuHolder h)) return;
-                    if (h != holder) return; // same instance
+                    if (h != holder) return;
                     if (!"team_members".equalsIgnoreCase(h.menuKey())) return;
 
                     ItemStack rebuilt = skulls.buildPlayerHead(
@@ -255,10 +264,7 @@ public final class MenuListRenderer {
 
     public void renderPagination(Inventory inv, MenuHolder holder, int size, Player viewer, Team viewerTeam,
                                  ConfigurationSection menu) {
-        // unchanged from your version (omitted for brevity)
-        // KEEP YOUR EXISTING METHOD BODY HERE
-        // (You already pasted it; it doesn't affect skins.)
-        // -------------------------------
+        // unchanged (your existing body)
         ConfigurationSection pag = menu.getConfigurationSection("pagination");
         if (pag == null) return;
         if (!plugin.menus().bool(pag, "enabled", false)) return;
@@ -352,8 +358,7 @@ public final class MenuListRenderer {
     // Team Info: home bed rendering (unchanged)
     // --------------------
     public void renderTeamHomeBed(Inventory inv, MenuHolder holder, int size, Player viewer, Team team, ConfigurationSection items) {
-        // KEEP YOUR EXISTING METHOD BODY HERE
-        // (Your current one is fine and unrelated to skulls.)
+        // your existing body
         if (inv == null || holder == null || viewer == null || team == null || items == null) return;
 
         ConfigurationSection sec = items.getConfigurationSection("team_home");
