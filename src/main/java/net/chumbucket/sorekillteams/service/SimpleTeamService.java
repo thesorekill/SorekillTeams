@@ -39,6 +39,7 @@ public final class SimpleTeamService implements TeamService {
     private final Set<UUID> teamChatToggled = ConcurrentHashMap.newKeySet();
     private final Map<UUID, Long> inviteCooldownUntil = new ConcurrentHashMap<>();
 
+    // spyPlayer -> set of teamIds being spied
     private final Map<UUID, Set<UUID>> spyTargets = new ConcurrentHashMap<>();
 
     // ✅ Only write to SQL when THIS backend actually changed something
@@ -55,9 +56,7 @@ public final class SimpleTeamService implements TeamService {
     // =========================
 
     public void markDirty() { dirty.set(true); }
-
     public boolean isDirty() { return dirty.get(); }
-
     public boolean consumeDirty() { return dirty.getAndSet(false); }
 
     // =========================
@@ -66,7 +65,7 @@ public final class SimpleTeamService implements TeamService {
 
     /**
      * ✅ FIX: actually remove cached membership mapping.
-     * (Your old version only cleared toggles/invites, leaving playerToTeam stale.)
+     * (If SQL says they have no team, playerToTeam must be cleared.)
      */
     public void clearCachedMembership(UUID playerUuid) {
         if (playerUuid == null) return;
@@ -77,34 +76,46 @@ public final class SimpleTeamService implements TeamService {
     }
 
     /**
-     * Remove a team from local cache (used when SQL says the team no longer exists).
-     * Does NOT mark dirty (because this is cache reconciliation, not a local “change”).
+     * Remove a team from local cache.
+     * Cache reconciliation ONLY — does NOT mark dirty.
+     *
+     * IMPORTANT:
+     * - Do NOT clear homes here (storage is authoritative)
+     * - Do NOT clear TeamInvites globally here (invites are runtime-only)
      */
     public void evictCachedTeam(UUID teamId) {
         if (teamId == null) return;
 
         Team removed = teams.remove(teamId);
-        if (removed != null) {
-            for (UUID m : new HashSet<>(removed.getMembers())) {
-                if (m != null && teamId.equals(playerToTeam.get(m))) {
-                    playerToTeam.remove(m);
-                    teamChatToggled.remove(m);
-                }
+        if (removed == null) {
+            // still prune spy watchers if team is gone locally
+            removeTeamFromAllSpyTargets(teamId);
+            return;
+        }
+
+        // remove membership mappings that pointed to this team
+        for (UUID m : new HashSet<>(removed.getMembers())) {
+            if (m == null) continue;
+            UUID mapped = playerToTeam.get(m);
+            if (teamId.equals(mapped)) {
+                playerToTeam.remove(m);
+                teamChatToggled.remove(m);
+                invites.clearTarget(m);
             }
         }
 
-        inviteCooldownUntil.remove(teamId);
-        invites.clearTeam(teamId);
+        // prune spy watchers for this team id
         removeTeamFromAllSpyTargets(teamId);
     }
 
     /**
      * Replace the entire teams snapshot from SQL.
-     * Keeps runtime-only state as much as possible, but evicts teams that no longer exist.
      * Does NOT mark dirty.
+     *
+     * This is what fixes "browse teams still shows disbanded teams" on other backends.
      */
     public void replaceTeamsSnapshot(Collection<Team> loadedTeams) {
-        // rebuild new maps
+        // Build new snapshots first
         Map<UUID, Team> newTeams = new HashMap<>();
         Map<UUID, UUID> newPlayerToTeam = new HashMap<>();
 
@@ -122,15 +133,17 @@ public final class SimpleTeamService implements TeamService {
             }
         }
 
-        // swap (thread-safe enough for our usage; all callers apply on main thread)
+        // Swap in one direction (called on main thread)
         teams.clear();
         teams.putAll(newTeams);
 
         playerToTeam.clear();
         playerToTeam.putAll(newPlayerToTeam);
 
-        // prune runtime state that no longer makes sense
+        // Prune runtime-only state that depends on membership/teams
         teamChatToggled.removeIf(u -> !playerToTeam.containsKey(u));
+
+        // prune spy targets for teams that no longer exist
         spyTargets.entrySet().removeIf(e -> {
             Set<UUID> watching = e.getValue();
             if (watching == null) return true;
@@ -138,7 +151,10 @@ public final class SimpleTeamService implements TeamService {
             return watching.isEmpty();
         });
 
-        // IMPORTANT: snapshot loads must not mark dirty
+        // NOTE: do NOT touch invites here (they are runtime-only)
+        // NOTE: do NOT touch homes here (storage is authoritative)
+
+        // Snapshot loads must not mark dirty
         dirty.set(false);
     }
 
@@ -147,7 +163,7 @@ public final class SimpleTeamService implements TeamService {
     // =========================
 
     public void putLoadedTeam(Team t) {
-        if (t == null) return;
+        if (t == null || t.getId() == null) return;
 
         ensureOwnerInMembers(t);
         dedupeMembers(t);
@@ -160,7 +176,6 @@ public final class SimpleTeamService implements TeamService {
     }
 
     public void putAllTeams(Collection<Team> loadedTeams) {
-        // startup load can behave like replace
         replaceTeamsSnapshot(loadedTeams);
     }
 
@@ -821,13 +836,19 @@ public final class SimpleTeamService implements TeamService {
             if (m == null) continue;
             playerToTeam.remove(m);
             teamChatToggled.remove(m);
+            invites.clearTarget(m);
         }
 
-        inviteCooldownUntil.remove(t.getOwner());
+        // cooldown is keyed by inviter UUIDs; removing owner is the only meaningful cleanup here
+        if (t.getOwner() != null) {
+            inviteCooldownUntil.remove(t.getOwner());
+        }
+
         teams.remove(t.getId());
 
         invites.clearTeam(t.getId());
         removeTeamFromAllSpyTargets(t.getId());
+
         if (plugin.teamHomes() != null) {
             plugin.teamHomes().clearTeam(t.getId());
         }

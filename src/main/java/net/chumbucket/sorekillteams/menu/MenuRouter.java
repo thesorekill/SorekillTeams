@@ -65,6 +65,8 @@ public final class MenuRouter {
         ConfigurationSection menu = plugin.menus().menu(menuKey);
         if (menu == null) return;
 
+        plugin.ensureTeamsSnapshotFreshFromSql();
+        plugin.ensureTeamFreshFromSql(p); // optional but good
         Team viewerTeam = plugin.teams().getTeamByPlayer(p.getUniqueId()).orElse(null);
         Team placeholderTeamForTitle = resolvePlaceholderTeamForMenu(menuKey, viewerTeam, ctx);
 

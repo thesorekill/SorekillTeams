@@ -34,6 +34,7 @@ public final class TeamMenuCommands implements TeamSubcommandModule {
             return true;
         }
 
+        // MenuRouter now handles freshness on open()
         plugin.menuRouter().open(p, "main");
         return true;
     }

@@ -54,6 +54,9 @@ public final class TeamMembershipCommands implements TeamSubcommandModule {
         plugin.teams().leaveTeam(p.getUniqueId());
         plugin.msg().send(p, "team_left");
 
+        // ✅ If menus enabled, immediately reflect new state
+        reopenAfterMembershipChange(p);
+
         if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " left team");
         return true;
     }
@@ -65,6 +68,9 @@ public final class TeamMembershipCommands implements TeamSubcommandModule {
         }
 
         plugin.teams().disbandTeam(p.getUniqueId());
+
+        // ✅ After disband, show main menu (not team_info)
+        reopenMainAfterDisband(p);
 
         if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " disbanded team");
         return true;
@@ -100,6 +106,9 @@ public final class TeamMembershipCommands implements TeamSubcommandModule {
                 "{team}", Msg.color(newName)
         );
 
+        // ✅ Refresh menu so title/lore updates
+        reopenTeamInfoIfInMenu(p);
+
         if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " renamed team old=" + oldName + " new=" + newName);
         return true;
     }
@@ -120,11 +129,13 @@ public final class TeamMembershipCommands implements TeamSubcommandModule {
             return true;
         }
 
+        // capture team name before kick (since membership may shift)
+        Team before = plugin.teams().getTeamByPlayer(p.getUniqueId()).orElse(null);
+        String teamName = (before != null ? before.getName() : "Team");
+
         plugin.teams().kickMember(p.getUniqueId(), targetUuid);
 
         String targetName = nameOf(targetUuid);
-        Team t = plugin.teams().getTeamByPlayer(p.getUniqueId()).orElse(null);
-        String teamName = (t != null ? t.getName() : "Team");
 
         plugin.msg().send(p, "team_kick_success",
                 "{player}", targetName,
@@ -137,7 +148,14 @@ public final class TeamMembershipCommands implements TeamSubcommandModule {
                     "{team}", Msg.color(teamName),
                     "{by}", p.getName()
             );
+
+            // If the kicked player currently has menus open, they can /team to reopen,
+            // but we at least ensure their cache will be fresh if SQL mode
+            try { plugin.ensureTeamFreshFromSql(targetUuid); } catch (Throwable ignored) {}
         }
+
+        // ✅ Refresh owner menu (members list / head cycle)
+        reopenTeamInfoIfInMenu(p);
 
         if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " kicked uuid=" + targetUuid);
         return true;
@@ -178,7 +196,58 @@ public final class TeamMembershipCommands implements TeamSubcommandModule {
             );
         }
 
+        // ✅ Refresh menu so owner-only buttons / actions update correctly
+        reopenTeamInfoIfInMenu(p);
+        if (targetOnline != null) reopenTeamInfoIfInMenu(targetOnline);
+
         if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " transferred ownership -> " + targetUuid);
         return true;
+    }
+
+    // ---------------------------------------------------------
+    // Menu refresh helpers (safe, no-op if menus disabled)
+    // ---------------------------------------------------------
+
+    private void reopenAfterMembershipChange(Player p) {
+        if (p == null) return;
+
+        boolean menusEnabled = plugin.getConfig().getBoolean("menus.enabled", true);
+        if (!menusEnabled || plugin.menuRouter() == null) return;
+
+        plugin.getServer().getScheduler().runTask(plugin, () -> {
+            boolean inTeam = plugin.teams().getTeamByPlayer(p.getUniqueId()).isPresent();
+            if (inTeam) plugin.menuRouter().open(p, "team_info");
+            else plugin.menuRouter().open(p, "main");
+        });
+    }
+
+    private void reopenMainAfterDisband(Player p) {
+        if (p == null) return;
+
+        boolean menusEnabled = plugin.getConfig().getBoolean("menus.enabled", true);
+        if (!menusEnabled || plugin.menuRouter() == null) return;
+
+        plugin.getServer().getScheduler().runTask(plugin, () -> plugin.menuRouter().open(p, "main"));
+    }
+
+    private void reopenTeamInfoIfInMenu(Player p) {
+        if (p == null) return;
+
+        boolean menusEnabled = plugin.getConfig().getBoolean("menus.enabled", true);
+        if (!menusEnabled || plugin.menuRouter() == null) return;
+
+        // If they're using commands while menu is open, refresh it.
+        if (p.getOpenInventory() == null) return;
+        if (p.getOpenInventory().getTopInventory() == null) return;
+
+        plugin.getServer().getScheduler().runTask(plugin, () -> {
+            // If they still have a menu open, refresh to ensure members/head counts update
+            if (p.getOpenInventory() == null || p.getOpenInventory().getTopInventory() == null) return;
+            if (!(p.getOpenInventory().getTopInventory().getHolder() instanceof net.chumbucket.sorekillteams.menu.MenuHolder)) return;
+
+            boolean inTeam = plugin.teams().getTeamByPlayer(p.getUniqueId()).isPresent();
+            if (inTeam) plugin.menuRouter().open(p, "team_info");
+            else plugin.menuRouter().open(p, "main");
+        });
     }
 }
