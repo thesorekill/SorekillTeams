@@ -19,9 +19,15 @@ update_checker:
   enabled: true
 
   spigot:
+    # Used for the clickable link shown to admins + console messages
     history_url: "https://www.spigotmc.org/resources/sorekillteams.131034/history"
 
-  # If true, players with permission "sorekillteams.admin" get notified on join
+    # Used for the actual version check via Spiget
+    resource_id: 131034
+
+    # Optional (only used if history_url is missing)
+    slug: "sorekillteams"
+
   notify_ops_on_join: true
 
 
@@ -89,6 +95,7 @@ teams:
   reserved_match:
     levenshtein_distance: 2
 
+
 # ----------------------------------------------------------------------------
 # Team Menus (Every menu is configurable in menus.yml)
 # ----------------------------------------------------------------------------
@@ -102,6 +109,8 @@ menus:
 
   # If true, registers "/team menu" as a shortcut to open the GUI
   enable_team_menu_subcommand: true
+
+
 # ----------------------------------------------------------------------------
 # Invites
 # ----------------------------------------------------------------------------
@@ -151,7 +160,19 @@ chat:
   #   {team}    team name
   #   {player}  sender name
   #   {message} message content
+  #
+  # Note:
+  # - You can also use PlaceholderAPI placeholders (%...%) if PlaceholderAPI is installed
+  #   and integrations.placeholderapi is true.
+  # - You can also use MiniPlaceholders (<...>) if your chat pipeline supports MiniMessage
+  #   AND MiniPlaceholders is installed + integrations.miniplaceholders is true.
   format: "&8&l(&c&l{team}&8&l) &f{player} &8&l> &c{message}"
+
+  # Example (PlaceholderAPI) — commented out on purpose:
+  # format: "&8&l(&c%player_name%&8&l) &7[%sorekillteams_team%] &f{player} &8&l> &c{message}"
+  #
+  # Example (MiniPlaceholders / MiniMessage style) — commented out on purpose:
+  # format: "<dark_gray><bold>(<red><bold><sorekillteams_team><dark_gray><bold>) <white>{player} <dark_gray><bold>> <red>{message}"
 
   # If true, players can toggle "team chat mode" so their normal chat goes to team chat
   toggle_enabled: true
@@ -245,13 +266,68 @@ admin:
 
 
 # ----------------------------------------------------------------------------
-# Integrations
+# Integrations / Placeholders
 # ----------------------------------------------------------------------------
+# Placeholder formats:
+#
+# PlaceholderAPI (PAPI):
+#   %sorekillteams_<placeholder>%
+#
+# MiniPlaceholders:
+#   <sorekillteams_<placeholder>>
+#
+# You can use these in chat formats, scoreboards, nametags, actionbars, menus,
+# or any plugin that supports PlaceholderAPI or MiniPlaceholders.
+#
+# ---------------------------------------------------------------------------
+# Core team placeholders
+# ---------------------------------------------------------------------------
+# sorekillteams_team
+#   -> Team name (blank if player is not in a team)
+#
+# sorekillteams_team_id
+#   -> Team UUID (blank if not in a team)
+#
+# sorekillteams_in_team
+#   -> "true" or "false"
+#
+# sorekillteams_team_owner
+#   -> Team owner username (blank if none)
+#
+# sorekillteams_team_members
+#   -> Total members (owner + members)
+#
+# ---------------------------------------------------------------------------
+# Member count placeholders (numbers only)
+# ---------------------------------------------------------------------------
+# sorekillteams_members_total
+#   -> Total members (owner + members)
+#
+# sorekillteams_members_online
+#   -> Number of online team members
+#
+# sorekillteams_members_offline
+#   -> Number of offline team members
+#
+# ---------------------------------------------------------------------------
+# Team homes placeholders
+# ---------------------------------------------------------------------------
+# sorekillteams_homes_count
+#   -> Number of homes the team has
+#
+# sorekillteams_home_1
+# sorekillteams_home_2
+# sorekillteams_home_3
+# sorekillteams_home_4
+# sorekillteams_home_5
+#   -> Display name of the Nth team home (blank if missing)
+#
+# Notes:
+# - Home placeholders return blanks if homes are disabled or the player has no team.
+# - Online/offline counts are based on players online on THIS server.
+# - MiniPlaceholders require a MiniMessage-compatible output plugin.
 integrations:
-  # If PlaceholderAPI is installed, allow expansions (if you implement them)
   placeholderapi: true
-
-  # If MiniPlaceholders is installed, allow placeholders (if you implement them)
   miniplaceholders: true
 
 

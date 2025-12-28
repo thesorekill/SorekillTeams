@@ -14,6 +14,7 @@ import net.chumbucket.sorekillteams.SorekillTeamsPlugin;
 import org.bukkit.ChatColor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.file.YamlConfiguration;
+import org.bukkit.entity.Player;
 
 import java.io.File;
 
@@ -76,6 +77,13 @@ public final class Msg {
      * - blank string ("") -> null (DISABLED)
      */
     public String format(String key) {
+        return format((Player) null, key);
+    }
+
+    /**
+     * Formats message for a specific player (enables PlaceholderAPI replacement when installed).
+     */
+    public String format(Player viewer, String key) {
         String s = raw(key);
 
         // missing
@@ -89,6 +97,10 @@ public final class Msg {
         }
 
         s = s.replace("{prefix}", cachedPrefixRaw);
+
+        // Apply external placeholders (PAPI) BEFORE color translate
+        s = applyExternalPlaceholders(viewer, s);
+
         return color(s);
     }
 
@@ -98,6 +110,13 @@ public final class Msg {
      * - blank string ("") -> null (DISABLED)
      */
     public String format(String key, String... pairs) {
+        return format((Player) null, key, pairs);
+    }
+
+    /**
+     * Formats message with placeholder pairs for a specific player (PAPI supported).
+     */
+    public String format(Player viewer, String key, String... pairs) {
         String s = raw(key);
 
         // missing
@@ -120,19 +139,24 @@ public final class Msg {
             }
         }
 
+        // Apply external placeholders (PAPI) BEFORE color translate
+        s = applyExternalPlaceholders(viewer, s);
+
         return color(s);
     }
 
     public void send(CommandSender to, String key) {
         if (to == null) return;
-        String msg = format(key);
+        Player viewer = (to instanceof Player p) ? p : null;
+        String msg = format(viewer, key);
         if (msg == null) return; // disabled or missing
         to.sendMessage(msg);
     }
 
     public void send(CommandSender to, String key, String... pairs) {
         if (to == null) return;
-        String msg = format(key, pairs);
+        Player viewer = (to instanceof Player p) ? p : null;
+        String msg = format(viewer, key, pairs);
         if (msg == null) return; // disabled or missing
         to.sendMessage(msg);
     }
@@ -141,7 +165,23 @@ public final class Msg {
     public void sendRaw(CommandSender to, String message) {
         if (to == null) return;
         if (message == null || message.isBlank()) return;
-        to.sendMessage(color(message));
+
+        Player viewer = (to instanceof Player p) ? p : null;
+
+        // Apply external placeholders (PAPI) BEFORE color translate
+        String out = applyExternalPlaceholders(viewer, message);
+
+        to.sendMessage(color(out));
+    }
+
+    private String applyExternalPlaceholders(Player viewer, String input) {
+        if (input == null || input.isBlank()) return input;
+        if (plugin == null || plugin.placeholders() == null) return input;
+        try {
+            return plugin.placeholders().apply(viewer, input);
+        } catch (Throwable ignored) {
+            return input;
+        }
     }
 
     public static String color(String s) {
