@@ -21,6 +21,7 @@ import net.chumbucket.sorekillteams.listener.TeamChatListener;
 import net.chumbucket.sorekillteams.listener.TeamOnlineStatusListener;
 import net.chumbucket.sorekillteams.menu.MenuRouter;
 import net.chumbucket.sorekillteams.model.TeamInvites;
+import net.chumbucket.sorekillteams.placeholders.PlaceholderBridge;
 import net.chumbucket.sorekillteams.service.SimpleTeamHomeService;
 import net.chumbucket.sorekillteams.service.SimpleTeamService;
 import net.chumbucket.sorekillteams.service.TeamHomeService;
@@ -49,8 +50,11 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     private Actionbar actionbar;
     private Debug debug;
 
-    // ✅ NEW: GUI router/executor
+    // GUI router/executor
     private MenuRouter menuRouter;
+
+    // Placeholders bridge (PAPI + MiniPlaceholders)
+    private PlaceholderBridge placeholderBridge;
 
     private TeamStorage storage;
     private TeamService teams;
@@ -84,8 +88,12 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         this.actionbar = new Actionbar(this);
         this.debug = new Debug(this);
 
-        // ✅ NEW
+        // GUI
         this.menuRouter = new MenuRouter(this);
+
+        // Placeholders (no hard dependencies)
+        this.placeholderBridge = new PlaceholderBridge(this);
+        this.placeholderBridge.hookAll();
 
         this.storage = new YamlTeamStorage(this);
         this.teams = new SimpleTeamService(this, storage);
@@ -119,7 +127,7 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         getServer().getPluginManager().registerEvents(new TeamChatListener(this), this);
         getServer().getPluginManager().registerEvents(new TeamOnlineStatusListener(this), this);
 
-        // ✅ Menu listeners
+        // Menu listeners
         getServer().getPluginManager().registerEvents(new MainMenuListener(this), this);
         getServer().getPluginManager().registerEvents(new CreateTeamFlowListener(this), this);
 
@@ -141,6 +149,11 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
         // best-effort final save
         trySaveNowSync("shutdown");
+
+        // best-effort unhook
+        if (placeholderBridge != null) {
+            placeholderBridge.unhookAll();
+        }
 
         getLogger().info("SorekillTeams disabled.");
     }
@@ -170,8 +183,20 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             menus = new Menus(this);
         }
 
-        // ✅ ensure router exists after reload
+        // ensure router exists after reload
         if (menuRouter == null) menuRouter = new MenuRouter(this);
+
+        // refresh placeholder bridge (config toggles may change)
+        // NOTE: PAPI expansions persist=true; re-registering repeatedly is not useful.
+        // So we rebuild the bridge (for apply()), but only hook once per JVM lifetime.
+        if (placeholderBridge == null) {
+            placeholderBridge = new PlaceholderBridge(this);
+            placeholderBridge.hookAll();
+        } else {
+            // just rebuild resolver methods based on current server state/config
+            placeholderBridge = new PlaceholderBridge(this);
+            placeholderBridge.hookAll();
+        }
 
         // Reload teams (best-effort; keep old if reload fails)
         try {
@@ -407,8 +432,9 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     public Actionbar actionbar() { return actionbar; }
     public Debug debug() { return debug; }
 
-    // ✅ NEW
     public MenuRouter menuRouter() { return menuRouter; }
+
+    public PlaceholderBridge placeholders() { return placeholderBridge; }
 
     public TeamService teams() { return teams; }
     public TeamStorage storage() { return storage; }

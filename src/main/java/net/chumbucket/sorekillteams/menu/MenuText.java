@@ -25,6 +25,8 @@ import java.util.UUID;
 /**
  * Placeholder apply + role-based lore filtering.
  * This is the exact same logic you had, just isolated.
+ *
+ * Now also supports PlaceholderAPI placeholders (if installed + enabled in config).
  */
 public final class MenuText {
 
@@ -61,6 +63,13 @@ public final class MenuText {
         out = out.replace("{invite_count}", String.valueOf(inviteCount));
         out = out.replace("{ff}", Msg.color(ff));
         out = out.replace("{chat}", Msg.color(chat));
+
+        // ✅ Apply external placeholders (PAPI) before color codes
+        if (viewer != null && plugin.placeholders() != null) {
+            try {
+                out = plugin.placeholders().apply(viewer, out);
+            } catch (Throwable ignored) {}
+        }
 
         return Msg.color(out);
     }
