@@ -78,18 +78,12 @@ public final class MenuRouter {
         // Viewer team (for placeholders on most menus)
         Team viewerTeam = plugin.teams().getTeamByPlayer(p.getUniqueId()).orElse(null);
 
-        // For some menus (team_members opened from browse_teams), placeholders should use the TARGET team
-        Team placeholderTeam = viewerTeam;
-        if ("team_members".equalsIgnoreCase(menuKey) && ctx != null) {
-            String ctxTeamId = ctx.get("team_id");
-            UUID tid = safeUuid(ctxTeamId);
-            if (tid != null) {
-                placeholderTeam = plugin.teams().getTeamById(tid).orElse(viewerTeam);
-            }
-        }
+        // Placeholder team for title: if browsing team_members via ctx(team_id),
+        // title should use that target team (not the viewer's own team).
+        Team placeholderTeamForTitle = resolvePlaceholderTeamForMenu(menuKey, viewerTeam, ctx);
 
         String rawTitle = plugin.menus().str(menu, "title", "&8ᴛᴇᴀᴍꜱ");
-        String title = apply(p, placeholderTeam, rawTitle);
+        String title = apply(p, placeholderTeamForTitle, rawTitle);
 
         int rows = Menus.clampRows(plugin.menus().integer(menu, "rows", 3));
         int size = rows * 9;
@@ -591,11 +585,12 @@ public final class MenuRouter {
                     ItemStack head = buildBrowseTeamCycleHead(viewer, t, 0, name, lore, owner, membersCount);
                     inv.setItem(slot, head);
                 } else {
+                    String teamName = (t.getName() == null ? "Team" : t.getName());
                     ItemStack it = item(
                             mat,
-                            Msg.color(name.replace("{team}", Msg.color(t.getName() == null ? "Team" : t.getName()))),
+                            Msg.color(name.replace("{team}", Msg.color(teamName))),
                             lore.stream()
-                                    .map(x -> Msg.color(x.replace("{team}", Msg.color(t.getName() == null ? "Team" : t.getName()))
+                                    .map(x -> Msg.color(x.replace("{team}", Msg.color(teamName))
                                             .replace("{owner}", owner)
                                             .replace("{members}", membersCount)))
                                     .toList()
@@ -641,20 +636,19 @@ public final class MenuRouter {
                     action = clickActionTemplate.replace("{member_uuid}", u.toString()).replace("{member_name}", memberName);
                 }
 
-                ItemStack head = buildPlayerHead(u,
+                // IMPORTANT: applyList(viewer, targetTeam, lore) will now:
+                // 1) filter "(Team Owner)" / "(Member)" lines correctly
+                // 2) resolve placeholders correctly
+                ItemStack head = buildPlayerHead(
+                        u,
                         Msg.color(name.replace("{member_name}", memberName).replace("{member_role}", role)),
-                        lore.stream()
-                                .map(x -> Msg.color(x.replace("{member_name}", memberName).replace("{member_role}", role)))
-                                .toList());
+                        applyList(viewer, targetTeam, lore).stream()
+                                .map(x -> x.replace("{member_name}", memberName).replace("{member_role}", role))
+                                .toList()
+                );
 
                 inv.setItem(slot, head);
                 holder.bind(slot, action, closeOnClick);
-            }
-
-            // If we're on Paper and using async profile completion, do a couple delayed refresh passes
-            // so offline skins pop in without needing a reopen.
-            if (PAPER_SKULL_SET_PROFILE != null) {
-                scheduleTeamMembersRefresh(viewer, holder, size, targetTeam, slots, page, perPage, name, lore);
             }
             return;
         }
@@ -1065,12 +1059,50 @@ public final class MenuRouter {
     }
 
     // --------------------
-    // Placeholder apply
+    // Placeholder apply + role-based lore filtering
     // --------------------
 
+    private boolean isOwner(Player viewer, Team team) {
+        if (viewer == null || team == null || team.getOwner() == null) return false;
+        return viewer.getUniqueId().equals(team.getOwner());
+    }
+
+    private boolean isMember(Player viewer, Team team) {
+        if (viewer == null || team == null) return false;
+        UUID v = viewer.getUniqueId();
+        if (team.getOwner() != null && v.equals(team.getOwner())) return true;
+        if (team.getMembers() == null) return false;
+        return team.getMembers().contains(v);
+    }
+
+    /**
+     * Filters lore lines that contain "(Team Owner)" or "(Member)" so they only show
+     * to the appropriate viewer relative to the given "team" (the placeholder team).
+     *
+     * If viewer is browsing another team, they won't be owner/member -> those lines disappear.
+     */
+    private List<String> filterLoreByRole(Player viewer, Team team, List<String> lines) {
+        if (lines == null || lines.isEmpty()) return List.of();
+
+        boolean owner = isOwner(viewer, team);
+        boolean member = isMember(viewer, team) && !owner;
+
+        List<String> out = new ArrayList<>(lines.size());
+        for (String raw : lines) {
+            if (raw == null) continue;
+
+            if (raw.contains("(Team Owner)") && !owner) continue;
+            if (raw.contains("(Member)") && !member) continue;
+
+            out.add(raw);
+        }
+        return out;
+    }
+
     private List<String> applyList(Player viewer, Team team, List<String> in) {
-        List<String> out = new ArrayList<>();
-        for (String s : in) out.add(apply(viewer, team, s));
+        List<String> filtered = filterLoreByRole(viewer, team, in);
+        List<String> out = new ArrayList<>(filtered.size());
+        for (String s : filtered) out.add(apply(viewer, team, s));
         return out;
     }
 
@@ -1078,7 +1110,7 @@ public final class MenuRouter {
         if (s == null) return "";
         String out = s;
 
-        String teamName = (team == null ? "None" : Msg.color(team.getName()));
+        String teamName = (team == null || team.getName() == null ? "None" : Msg.color(team.getName()));
         String ownerName = "None";
         String members = (team == null ? "0" : String.valueOf(uniqueMemberCount(team)));
 
@@ -1191,6 +1223,27 @@ public final class MenuRouter {
     }
 
     // --------------------
+    // Resolve placeholder team for menu title
+    // --------------------
+
+    private Team resolvePlaceholderTeamForMenu(String menuKey, Team viewerTeam, Map<String, String> ctx) {
+        if (menuKey == null) return viewerTeam;
+
+        if ("team_members".equalsIgnoreCase(menuKey)) {
+            String id = (ctx == null ? null : ctx.get("team_id"));
+            if (id != null && !id.isBlank()) {
+                UUID tid = safeUuid(id);
+                if (tid != null) {
+                    return plugin.teams().getTeamById(tid).orElse(null);
+                }
+            }
+        }
+
+        // default
+        return viewerTeam;
+    }
+
+    // --------------------
     // Paper offline profile completion (async)
     // --------------------
 
@@ -1208,7 +1261,7 @@ public final class MenuRouter {
                 // Prefer createProfile(UUID, String) if present
                 if (PAPER_BUKKIT_CREATE_PROFILE_UUID_NAME != null) {
                     try {
-                        profile = PAPER_BUKKIT_CREATE_PROFILE_UUID_NAME.invoke(null, uuid, safeNameHint(nameHint));
+                        profile = PAPER_BUKKIT_CREATE_PROFILE_UUID_NAME.invoke(null, uuid, nameHint);
                     } catch (Throwable ignored) {
                         profile = null;
                     }
@@ -1225,9 +1278,6 @@ public final class MenuRouter {
 
                 if (profile == null) return;
 
-                // If we only had createProfile(UUID), try to setName(nameHint) before complete()
-                trySetProfileName(profile, nameHint);
-
                 // Fetch textures: complete() or complete(boolean)
                 if (tryCompleteProfile(profile)) {
                     paperProfileCache.put(uuid, profile);
@@ -1238,27 +1288,6 @@ public final class MenuRouter {
                 paperProfileInFlight.remove(uuid);
             }
         });
-    }
-
-    private static String safeNameHint(String nameHint) {
-        if (nameHint == null) return null;
-        String s = nameHint.trim();
-        if (s.isBlank()) return null;
-        // if nameOf() fell back to UUID prefix, don't pass that as a "name"
-        if (s.length() == 8 && s.matches("[0-9a-fA-F]{8}")) return null;
-        return s;
-    }
-
-    private void trySetProfileName(Object profile, String nameHint) {
-        String hint = safeNameHint(nameHint);
-        if (profile == null || hint == null) return;
-
-        try {
-            Method m = profile.getClass().getMethod("setName", String.class);
-            m.invoke(profile, hint);
-        } catch (Throwable ignored) {
-            // ignore
-        }
     }
 
     private boolean tryCompleteProfile(Object profile) {
@@ -1286,9 +1315,6 @@ public final class MenuRouter {
      * - On Paper, caches a completed PlayerProfile (textures fetched async) and applies it via reflection
      *   so offline players show correct skins.
      * - Otherwise falls back to SkullMeta#setOwningPlayer (Spigot cache-dependent).
-     *
-     * IMPORTANT: We do NOT call setOwningPlayer if we successfully applied a Paper profile,
-     * because that can override the applied profile and cause Steve/Alex again.
      */
     private ItemStack buildPlayerHead(UUID owningUuid, String name, List<String> lore) {
         ItemStack it = new ItemStack(Material.PLAYER_HEAD);
@@ -1298,27 +1324,25 @@ public final class MenuRouter {
             return item(Material.PLAYER_HEAD, name, lore);
         }
 
-        boolean appliedPaperProfile = false;
-
-        // Paper path: apply cached profile if present; otherwise queue async completion
+        // Paper path (reflection): apply cached profile if present; otherwise queue async completion
         if (owningUuid != null && PAPER_SKULL_SET_PROFILE != null) {
             Object cached = paperProfileCache.get(owningUuid);
             if (cached != null) {
                 try {
                     PAPER_SKULL_SET_PROFILE.invoke(skull, cached);
-                    appliedPaperProfile = true;
                 } catch (Throwable ignored) {
-                    appliedPaperProfile = false;
+                    // fall through to Spigot fallback
                 }
             } else {
-                String hint = null;
+                // queue async fetch (menu will update via cycling / reopen)
+                String hint;
                 try { hint = nameOf(owningUuid); } catch (Throwable ignored) { hint = null; }
                 warmPaperProfileAsync(owningUuid, hint);
             }
         }
 
-        // Fallback (Spigot): ONLY if Paper profile was NOT applied
-        if (!appliedPaperProfile && owningUuid != null) {
+        // Fallback (Spigot): only works if the server already knows/cached the skin
+        if (owningUuid != null) {
             try {
                 OfflinePlayer off = Bukkit.getOfflinePlayer(owningUuid);
                 if (off != null) skull.setOwningPlayer(off);
@@ -1334,65 +1358,6 @@ public final class MenuRouter {
         skull.addItemFlags(ItemFlag.HIDE_ATTRIBUTES);
         it.setItemMeta(skull);
         return it;
-    }
-
-    /**
-     * Team members menu doesn't cycle by default, so schedule a couple delayed refresh passes
-     * to let async Paper profiles complete and then re-apply heads.
-     */
-    private void scheduleTeamMembersRefresh(Player viewer,
-                                           MenuHolder holder,
-                                           int invSize,
-                                           Team targetTeam,
-                                           List<Integer> slots,
-                                           int page,
-                                           int perPage,
-                                           String nameTemplate,
-                                           List<String> loreTemplate) {
-
-        if (plugin == null || viewer == null || holder == null || targetTeam == null) return;
-        if (slots == null || slots.isEmpty()) return;
-
-        // Two passes: quick + slightly later
-        int[] delays = new int[] { 20, 60 };
-
-        for (int delay : delays) {
-            Bukkit.getScheduler().runTaskLater(plugin, () -> {
-                if (!viewer.isOnline()) return;
-
-                if (viewer.getOpenInventory() == null
-                        || viewer.getOpenInventory().getTopInventory() == null
-                        || viewer.getOpenInventory().getTopInventory().getHolder() != holder) {
-                    return;
-                }
-
-                if (!"team_members".equalsIgnoreCase(holder.menuKey())) return;
-
-                Inventory top = viewer.getOpenInventory().getTopInventory();
-
-                List<UUID> members = uniqueTeamMembers(targetTeam);
-                int start = Math.max(0, page) * Math.max(1, perPage);
-                List<UUID> pageItems = slice(members, start, Math.max(1, perPage));
-
-                for (int i = 0; i < Math.min(slots.size(), pageItems.size()); i++) {
-                    int slot = Menus.clampSlot(slots.get(i), invSize);
-                    UUID u = pageItems.get(i);
-
-                    String memberName = nameOf(u);
-                    String role = (targetTeam.getOwner() != null && targetTeam.getOwner().equals(u)) ? "Owner" : "Member";
-
-                    ItemStack head = buildPlayerHead(
-                            u,
-                            Msg.color(nameTemplate.replace("{member_name}", memberName).replace("{member_role}", role)),
-                            loreTemplate.stream()
-                                    .map(x -> Msg.color(x.replace("{member_name}", memberName).replace("{member_role}", role)))
-                                    .toList()
-                    );
-
-                    top.setItem(slot, head);
-                }
-            }, delay);
-        }
     }
 
     // --------------------

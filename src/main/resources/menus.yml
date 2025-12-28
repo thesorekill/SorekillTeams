@@ -150,7 +150,7 @@ menus:
 
 
   team_members:
-    title: "&8ᴍᴇᴍʙᴇʀꜱ - {team}"
+    title: "&8ᴍᴇᴍʙᴇʀꜱ - &c&l{team}"
     rows: 4
 
     filler:
