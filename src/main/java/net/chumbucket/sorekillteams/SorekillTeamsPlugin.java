@@ -57,6 +57,9 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import net.byteflux.libby.BukkitLibraryManager;
+import net.byteflux.libby.Library;
+
 public final class SorekillTeamsPlugin extends JavaPlugin {
 
     private Msg msg;
@@ -89,6 +92,9 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     private SqlDatabase sqlDb;
     private SqlDialect sqlDialect;
     private String storageTypeActive = "yaml";
+
+    // cache which driver we already attempted to load this session
+    private String loadedJdbcDriverForType = null;
 
     @Override
     public void onEnable() {
@@ -231,6 +237,102 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         }
     }
 
+    /**
+     * Downloads and loads the JDBC driver for the chosen storage type.
+     *
+     * We keep the plugin jar small by NOT shading any drivers.
+     * Instead, we fetch the needed one into ./plugins/SorekillTeams/libraries/ and load it.
+     */
+    private void loadJdbcDriverIfNeeded(String storageType) {
+        if (storageType == null) return;
+
+        String type = storageType.trim().toLowerCase(Locale.ROOT);
+        if (type.equals("postgres")) type = "postgresql";
+        if (type.equals("pg")) type = "postgresql";
+
+        if (type.equals("yaml")) return;
+        if (Objects.equals(loadedJdbcDriverForType, type)) return;
+
+        // Ensure data folder exists (Libby will cache under plugin folder)
+        if (!getDataFolder().exists() && !getDataFolder().mkdirs()) {
+            throw new IllegalStateException("Could not create plugin data folder for library cache: " + getDataFolder().getAbsolutePath());
+        }
+
+        final BukkitLibraryManager lm = new BukkitLibraryManager(this);
+
+        // Maven Central
+        lm.addRepository("https://repo1.maven.org/maven2/");
+
+        final Library lib;
+        switch (type) {
+            case "mysql" -> lib = Library.builder()
+                    .groupId("com.mysql")
+                    .artifactId("mysql-connector-j")
+                    .version(getDriverVersionOrThrow("mysql", "mysql.driver.version"))
+                    .build();
+
+            case "mariadb" -> lib = Library.builder()
+                    .groupId("org.mariadb.jdbc")
+                    .artifactId("mariadb-java-client")
+                    .version(getDriverVersionOrThrow("mariadb", "mariadb.driver.version"))
+                    .build();
+
+            case "postgresql" -> lib = Library.builder()
+                    .groupId("org.postgresql")
+                    .artifactId("postgresql")
+                    .version(getDriverVersionOrThrow("postgresql", "postgres.driver.version"))
+                    .build();
+
+            case "sqlite" -> lib = Library.builder()
+                    .groupId("org.xerial")
+                    .artifactId("sqlite-jdbc")
+                    .version(getDriverVersionOrThrow("sqlite", "sqlite.driver.version"))
+                    .build();
+
+            case "h2" -> lib = Library.builder()
+                    .groupId("com.h2database")
+                    .artifactId("h2")
+                    .version(getDriverVersionOrThrow("h2", "h2.version"))
+                    .build();
+
+            default -> throw new IllegalArgumentException(
+                    "Unknown storage.type '" + storageType + "'. Expected: yaml|sqlite|h2|mysql|mariadb|postgresql");
+        }
+
+        try {
+            getLogger().info("Loading JDBC driver for storage.type=" + type + " (" +
+                    lib.getGroupId() + ":" + lib.getArtifactId() + ":" + lib.getVersion() + ")");
+            lm.loadLibrary(lib);
+            loadedJdbcDriverForType = type;
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to download/load JDBC driver for storage.type=" + type +
+                    ": " + e.getClass().getSimpleName() + ": " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Reads a version from system properties first (so you can override),
+     * then falls back to hardcoded defaults that match your pom properties.
+     *
+     * Why: the plugin can't read Maven pom properties at runtime.
+     */
+    private String getDriverVersionOrThrow(String type, String keyHint) {
+        // Allow overriding via JVM: -Dsorekillteams.mysql.driver.version=...
+        String sysKey = "sorekillteams." + type + ".driver.version";
+        String v = System.getProperty(sysKey);
+        if (v != null && !v.isBlank()) return v.trim();
+
+        // Defaults must match the versions in your pom.xml properties
+        return switch (type) {
+            case "mysql" -> "9.1.0";
+            case "mariadb" -> "3.5.0";
+            case "postgresql" -> "42.7.4";
+            case "sqlite" -> "3.46.1.0";
+            case "h2" -> "2.3.232";
+            default -> throw new IllegalStateException("Missing driver version mapping for type=" + type + " (" + keyHint + ")");
+        };
+    }
+
     private void wireStorageFromConfig(boolean isStartup) {
         String type = getConfig().getString("storage.type", "yaml");
         type = (type == null ? "yaml" : type.trim().toLowerCase(Locale.ROOT));
@@ -256,6 +358,9 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             this.sqlDialect = null;
             return;
         }
+
+        // ✅ Ensure the JDBC driver exists before starting SQL
+        loadJdbcDriverIfNeeded(type);
 
         SqlDialect dialect = SqlDialect.fromStorageType(type);
 
@@ -291,6 +396,7 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             sqlDb = null;
         }
         sqlDialect = null;
+        // keep loadedJdbcDriverForType as-is; no need to unload jars
     }
 
     private void syncHomesWiringFromConfig(boolean isStartup) {
@@ -486,7 +592,7 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     private String getMenusFileNameSafe() {
         String v = null;
         try { v = getConfig().getString("files.menus", "menus.yml"); }
-        catch (Exception ignored) {}
+       catch (Exception ignored) {}
         return (v == null || v.isBlank()) ? "menus.yml" : v.trim();
     }
 
