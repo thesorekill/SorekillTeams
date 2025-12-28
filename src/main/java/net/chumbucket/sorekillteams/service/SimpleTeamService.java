@@ -115,6 +115,10 @@ public final class SimpleTeamService implements TeamService {
      * This is what fixes "browse teams still shows disbanded teams" on other backends.
      */
     public void replaceTeamsSnapshot(Collection<Team> loadedTeams) {
+
+        // ✅ Capture old snapshot so we can detect removals and notify
+        Map<UUID, Team> oldTeams = new HashMap<>(teams);
+
         // Build new snapshots first
         Map<UUID, Team> newTeams = new HashMap<>();
         Map<UUID, UUID> newPlayerToTeam = new HashMap<>();
@@ -129,6 +133,24 @@ public final class SimpleTeamService implements TeamService {
                 newTeams.put(t.getId(), t);
                 for (UUID m : t.getMembers()) {
                     if (m != null) newPlayerToTeam.put(m, t.getId());
+                }
+            }
+        }
+
+        // ✅ Detect teams that existed before but no longer exist in SQL snapshot
+        // This is the "team was disbanded elsewhere" case.
+        for (Map.Entry<UUID, Team> e : oldTeams.entrySet()) {
+            UUID oldId = e.getKey();
+            if (oldId == null) continue;
+
+            if (!newTeams.containsKey(oldId)) {
+                Team removed = e.getValue();
+                if (removed != null) {
+                    // message online members NOW (offline players can't be messaged)
+                    broadcastToTeam(removed, plugin.msg().format(
+                            "team_team_disbanded",
+                            "{team}", Msg.color(removed.getName())
+                    ));
                 }
             }
         }
@@ -150,9 +172,6 @@ public final class SimpleTeamService implements TeamService {
             watching.removeIf(id -> !teams.containsKey(id));
             return watching.isEmpty();
         });
-
-        // NOTE: do NOT touch invites here (they are runtime-only)
-        // NOTE: do NOT touch homes here (storage is authoritative)
 
         // Snapshot loads must not mark dirty
         dirty.set(false);

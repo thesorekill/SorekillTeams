@@ -43,6 +43,8 @@ import net.chumbucket.sorekillteams.util.Actionbar;
 import net.chumbucket.sorekillteams.util.Debug;
 import net.chumbucket.sorekillteams.util.Menus;
 import net.chumbucket.sorekillteams.util.Msg;
+
+import org.bukkit.Bukkit;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.PluginCommand;
 import org.bukkit.configuration.ConfigurationSection;
@@ -522,14 +524,33 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             Team finalLoadedTeam = loadedTeam;
 
             getServer().getScheduler().runTask(this, () -> {
-                UUID currentCached = simple.getTeamByPlayer(playerUuid).map(Team::getId).orElse(null);
-                if (Objects.equals(currentCached, finalSqlTeamId)) return;
+                UUID currentCachedTeamId = simple.getTeamByPlayer(playerUuid).map(Team::getId).orElse(null);
+                if (Objects.equals(currentCachedTeamId, finalSqlTeamId)) return;
 
+                // ✅ SQL says: player has NO team
                 if (finalSqlTeamId == null) {
+
+                    // If we previously thought they had a team, decide if this looks like a DISBAND:
+                    // - if team still exists in our snapshot => likely kick/leave (no disband message)
+                    // - if team is gone => disband happened elsewhere => notify if online
+                    if (currentCachedTeamId != null) {
+                        boolean teamStillExists = simple.getTeamById(currentCachedTeamId).isPresent();
+
+                        if (!teamStillExists) {
+                            Player online = Bukkit.getPlayer(playerUuid);
+                            if (online != null) {
+                                // Team is gone from snapshot, so we may not have the name here.
+                                // This message key should read fine without {team} too.
+                                msg().send(online, "team_team_disbanded");
+                            }
+                        }
+                    }
+
                     simple.clearCachedMembership(playerUuid);
                     return;
                 }
 
+                // ✅ SQL says: player IS in a team
                 if (finalLoadedTeam != null) {
                     simple.putLoadedTeam(finalLoadedTeam);
                 } else {

@@ -54,7 +54,6 @@ public final class TeamMembershipCommands implements TeamSubcommandModule {
         plugin.teams().leaveTeam(p.getUniqueId());
         plugin.msg().send(p, "team_left");
 
-        // ✅ If menus enabled, immediately reflect new state
         reopenAfterMembershipChange(p);
 
         if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " left team");
@@ -69,7 +68,6 @@ public final class TeamMembershipCommands implements TeamSubcommandModule {
 
         plugin.teams().disbandTeam(p.getUniqueId());
 
-        // ✅ After disband, show main menu (not team_info)
         reopenMainAfterDisband(p);
 
         if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " disbanded team");
@@ -106,7 +104,6 @@ public final class TeamMembershipCommands implements TeamSubcommandModule {
                 "{team}", Msg.color(newName)
         );
 
-        // ✅ Refresh menu so title/lore updates
         reopenTeamInfoIfInMenu(p);
 
         if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " renamed team old=" + oldName + " new=" + newName);
@@ -123,9 +120,20 @@ public final class TeamMembershipCommands implements TeamSubcommandModule {
             return true;
         }
 
+        // ✅ Upgrade: allow offline player names too (not only online/uuid)
         UUID targetUuid = resolvePlayerUuidOnlineOrUuid(args[1]);
         if (targetUuid == null) {
+            targetUuid = resolveOfflineUuidByName(args[1]);
+        }
+        if (targetUuid == null) {
             plugin.msg().send(p, "team_player_must_be_online_or_uuid");
+            return true;
+        }
+
+        if (targetUuid.equals(p.getUniqueId())) {
+            // don't let people kick themselves; existing service would reject if owner,
+            // but this gives a nicer UX.
+            plugin.msg().send(p, "team_cannot_kick_self");
             return true;
         }
 
@@ -149,12 +157,9 @@ public final class TeamMembershipCommands implements TeamSubcommandModule {
                     "{by}", p.getName()
             );
 
-            // If the kicked player currently has menus open, they can /team to reopen,
-            // but we at least ensure their cache will be fresh if SQL mode
             try { plugin.ensureTeamFreshFromSql(targetUuid); } catch (Throwable ignored) {}
         }
 
-        // ✅ Refresh owner menu (members list / head cycle)
         reopenTeamInfoIfInMenu(p);
 
         if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " kicked uuid=" + targetUuid);
@@ -172,6 +177,9 @@ public final class TeamMembershipCommands implements TeamSubcommandModule {
         }
 
         UUID targetUuid = resolvePlayerUuidOnlineOrUuid(args[1]);
+        if (targetUuid == null) {
+            targetUuid = resolveOfflineUuidByName(args[1]);
+        }
         if (targetUuid == null) {
             plugin.msg().send(p, "team_player_must_be_online_or_uuid");
             return true;
@@ -196,12 +204,63 @@ public final class TeamMembershipCommands implements TeamSubcommandModule {
             );
         }
 
-        // ✅ Refresh menu so owner-only buttons / actions update correctly
         reopenTeamInfoIfInMenu(p);
         if (targetOnline != null) reopenTeamInfoIfInMenu(targetOnline);
 
         if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " transferred ownership -> " + targetUuid);
         return true;
+    }
+
+    // ---------------------------------------------------------
+    // Offline name resolution
+    // ---------------------------------------------------------
+
+    private UUID resolveOfflineUuidByName(String nameOrUuid) {
+        if (nameOrUuid == null) return null;
+        String s = nameOrUuid.trim();
+        if (s.isEmpty()) return null;
+
+        // If it's a UUID string, accept it.
+        try {
+            return UUID.fromString(s);
+        } catch (IllegalArgumentException ignored) {}
+
+        // 1) Paper: only return if it's actually cached (safe, not fabricated)
+        UUID cached = getOfflinePlayerUuidIfCached(s);
+        if (cached != null) return cached;
+
+        // 2) Spigot fallback: deprecated API, but we only accept it if hasPlayedBefore()
+        return getOfflinePlayerUuidIfHasPlayedBefore(s);
+    }
+
+    private UUID getOfflinePlayerUuidIfCached(String name) {
+        try {
+            // Paper only: Bukkit.getOfflinePlayerIfCached(String)
+            java.lang.reflect.Method m = Bukkit.class.getMethod("getOfflinePlayerIfCached", String.class);
+            Object off = m.invoke(null, name);
+            if (off instanceof org.bukkit.OfflinePlayer op) {
+                UUID id = op.getUniqueId();
+                if (id != null) return id;
+            }
+        } catch (Throwable ignored) {
+            // Not Paper / method missing / reflection blocked
+        }
+        return null;
+    }
+
+    @SuppressWarnings("deprecation")
+    private UUID getOfflinePlayerUuidIfHasPlayedBefore(String name) {
+        try {
+            org.bukkit.OfflinePlayer op = Bukkit.getOfflinePlayer(name);
+            if (op == null) return null;
+
+            // Guard against fabricated offline players
+            if (!op.hasPlayedBefore() && !op.isOnline()) return null;
+
+            return op.getUniqueId();
+        } catch (Throwable ignored) {
+            return null;
+        }
     }
 
     // ---------------------------------------------------------
@@ -236,12 +295,10 @@ public final class TeamMembershipCommands implements TeamSubcommandModule {
         boolean menusEnabled = plugin.getConfig().getBoolean("menus.enabled", true);
         if (!menusEnabled || plugin.menuRouter() == null) return;
 
-        // If they're using commands while menu is open, refresh it.
         if (p.getOpenInventory() == null) return;
         if (p.getOpenInventory().getTopInventory() == null) return;
 
         plugin.getServer().getScheduler().runTask(plugin, () -> {
-            // If they still have a menu open, refresh to ensure members/head counts update
             if (p.getOpenInventory() == null || p.getOpenInventory().getTopInventory() == null) return;
             if (!(p.getOpenInventory().getTopInventory().getHolder() instanceof net.chumbucket.sorekillteams.menu.MenuHolder)) return;
 
