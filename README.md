@@ -176,10 +176,10 @@ Reload configs anytime with:
 
 ## Planned Features
 
-- Full Velocity + BungeeCord proxy integration
-- Cross-server home teleport finalization
 - Team roles and permissions
 - Scoreboard and nametag modules
+
+- Suggestions are appreciated!
 
 ---
 
