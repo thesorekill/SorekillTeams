@@ -1,18 +1,9 @@
-/*
- * Copyright © 2025 Sorekill
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- */
-
 package net.chumbucket.sorekillteams.command;
 
 import net.chumbucket.sorekillteams.SorekillTeamsPlugin;
 import net.chumbucket.sorekillteams.model.Team;
 import net.chumbucket.sorekillteams.model.TeamHome;
+import net.chumbucket.sorekillteams.network.TeamEventPacket;
 import net.chumbucket.sorekillteams.service.TeamHomeService;
 import net.chumbucket.sorekillteams.util.Msg;
 import net.chumbucket.sorekillteams.util.TeamHomeCooldowns;
@@ -32,9 +23,7 @@ public final class TeamHomeCommands implements TeamSubcommandModule {
     private final TeamHomeCooldowns cooldowns;
     private final TeamHomeWarmupManager warmups;
 
-    // Cooldown bypass for /team home
     private static final String HOME_BYPASS_COOLDOWN_PERMISSION = "sorekillteams.home.bypasscooldown";
-    // Warmup bypass
     private static final String HOME_BYPASS_WARMUP_PERMISSION = "sorekillteams.home.bypasswarmup";
 
     private static final Sound TELEPORT_SOUND = Sound.ENTITY_ENDERMAN_TELEPORT;
@@ -60,6 +49,29 @@ public final class TeamHomeCommands implements TeamSubcommandModule {
 
     private boolean homesEnabled() {
         return plugin.getConfig().getBoolean("homes.enabled", false) && plugin.teamHomes() != null;
+    }
+
+    private void publishHomeEvent(Team team, Player actor, TeamEventPacket.Type type, String homeDisplay) {
+        if (team == null || actor == null || type == null) return;
+
+        plugin.publishTeamEvent(new TeamEventPacket(
+                plugin.networkServerName(),
+                type,
+                team.getId(),
+                team.getName(),
+                actor.getUniqueId(),
+                actor.getName(),
+                null,
+                (homeDisplay == null ? "" : homeDisplay),
+                System.currentTimeMillis()
+        ));
+    }
+
+    private void refreshTeamMenus(UUID teamId) {
+        if (teamId == null) return;
+        if (plugin.menuRouter() != null) {
+            plugin.menuRouter().refreshTeamMenusForLocalViewers(teamId);
+        }
     }
 
     private boolean handleSetHome(Player p, String[] args, boolean debug) {
@@ -128,6 +140,12 @@ public final class TeamHomeCommands implements TeamSubcommandModule {
 
         plugin.msg().send(p, "team_home_set", "{home}", raw);
 
+        // ✅ Refresh menus on THIS backend immediately
+        refreshTeamMenus(team.getId());
+
+        // ✅ Publish to other backends so they refresh too
+        publishHomeEvent(team, p, TeamEventPacket.Type.HOME_SET, raw);
+
         if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " set team home=" + raw + " team=" + team.getName());
         return true;
     }
@@ -180,6 +198,12 @@ public final class TeamHomeCommands implements TeamSubcommandModule {
         }
 
         plugin.msg().send(p, "team_home_deleted", "{home}", raw);
+
+        // ✅ Refresh menus on THIS backend immediately
+        refreshTeamMenus(team.getId());
+
+        // ✅ Publish to other backends so they refresh too
+        publishHomeEvent(team, p, TeamEventPacket.Type.HOME_DELETED, raw);
 
         if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " deleted team home=" + raw + " team=" + team.getName());
         return true;
@@ -323,24 +347,15 @@ public final class TeamHomeCommands implements TeamSubcommandModule {
         return teleportNow(p, team.getId(), h, bypassCooldown);
     }
 
-    /**
-     * Runs after warmup completes. Re-checks restrictions and teleports if possible.
-     */
     private void completeTeleport(Player p, UUID teamId, TeamHome hh, boolean bypassCooldown) {
         if (p == null || !p.isOnline()) return;
 
         if (hh == null) {
-            // Home disappeared during warmup
             plugin.msg().send(p, "team_home_not_found", "{home}", "home");
             return;
         }
 
-        // Re-check proxy restriction in case data changed during warmup
         if (!passesProxyRestriction(p, hh)) return;
-
-        // We already checked cooldown before starting warmup, so no need to re-check here.
-        // But if you want to be extra strict, uncomment:
-        // if (!bypassCooldown && !cooldowns.passes(p)) return;
 
         teleportNow(p, teamId, hh, bypassCooldown);
     }
@@ -365,9 +380,6 @@ public final class TeamHomeCommands implements TeamSubcommandModule {
         return true;
     }
 
-    /**
-     * Proxy restriction helper (moved out of warmup manager; command-level check).
-     */
     private boolean passesProxyRestriction(Player p, TeamHome h) {
         boolean proxyMode = plugin.getConfig().getBoolean("homes.proxy_mode", false);
         boolean restrict = plugin.getConfig().getBoolean("homes.restrict_to_same_server", true);

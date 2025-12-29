@@ -621,15 +621,30 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     public void onRemoteTeamEvent(TeamEventPacket pkt) {
         if (pkt == null) return;
 
+        // Dedup protection
         if (!shouldProcessTeamEventOnce(pkt)) {
             return;
         }
 
+        // Refresh team snapshot / membership caches (best-effort)
         try {
             ensureTeamsSnapshotFreshFromSql();
             if (pkt.actorUuid() != null) ensureTeamFreshFromSql(pkt.actorUuid());
             if (pkt.targetUuid() != null) ensureTeamFreshFromSql(pkt.targetUuid());
         } catch (Throwable ignored) {}
+
+        // ✅ NEW: homes events require homes snapshot refresh so menus render correct state
+        boolean isHomeEvent =
+                pkt.type() == TeamEventPacket.Type.HOME_SET
+                || pkt.type() == TeamEventPacket.Type.HOME_DELETED
+                || pkt.type() == TeamEventPacket.Type.HOME_CLEARED;
+
+        if (isHomeEvent) {
+            try {
+                // Your method already exists and is safe (you call it from menu_open)
+                loadHomesBestEffort("remote_team_event:" + pkt.type().name());
+            } catch (Throwable ignored) {}
+        }
 
         final String key;
         final String[] pairs;
@@ -656,6 +671,7 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
                         "{team}", Msg.color(safe(pkt.teamName(), "Team"))
                 };
 
+                // Notify kicked target (only once, only if on this backend)
                 if (pkt.targetUuid() != null && shouldNotifyKickedOnce(pkt.targetUuid())) {
                     Player kicked = Bukkit.getPlayer(pkt.targetUuid());
                     if (kicked != null && kicked.isOnline()) {
@@ -697,11 +713,23 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
                     }
                 }
             }
+
+            // ✅ NEW: home events (no team-wide broadcast message by default)
+            // If you later add message keys, you can broadcast them here.
+            case HOME_SET, HOME_DELETED, HOME_CLEARED -> {
+                key = null;
+                pairs = null;
+            }
+
             default -> { return; }
         }
 
-        broadcastToLocalOnlineMembersOfTeam(pkt.teamId(), key, pairs, pkt.actorUuid(), pkt.targetUuid());
+        // Only broadcast chat messages for non-home events
+        if (key != null) {
+            broadcastToLocalOnlineMembersOfTeam(pkt.teamId(), key, pairs, pkt.actorUuid(), pkt.targetUuid());
+        }
 
+        // ✅ Menu handling (team menus + homes)
         if (menuRouter != null && pkt.teamId() != null) {
             final UUID teamId = pkt.teamId();
 
@@ -723,12 +751,19 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
                         case TEAM_DISBANDED -> {
                             menuRouter.closeTeamMenusForLocalViewers(teamId);
                         }
+
+                        // ✅ NEW: home events -> refresh menus so bed + homes list update immediately
+                        case HOME_SET, HOME_DELETED, HOME_CLEARED -> {
+                            menuRouter.refreshTeamMenusForLocalViewers(teamId);
+                        }
+
                         default -> { /* no-op */ }
                     }
                 } catch (Throwable ignored) {}
             });
         }
 
+        // Cache hygiene on disband (prevents phantom teams in browse)
         if (pkt.type() == TeamEventPacket.Type.TEAM_DISBANDED && teams instanceof SimpleTeamService simple) {
             try { simple.evictCachedTeam(pkt.teamId()); } catch (Throwable ignored) {}
         }

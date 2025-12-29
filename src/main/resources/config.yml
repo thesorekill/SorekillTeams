@@ -318,7 +318,7 @@ homes:
   # Max homes allowed per team (unless you later add permission overrides)
   max_homes: 1
 
-  # Metadata for networks / displays (stored with each home) (Should be same as proxy name to make teleports work.)
+  # Metadata for networks / displays (stored with each home) (Should be same as proxy name to make cross-server teleports work.)
   server_name: "survival"
 
   # Teleport warmup time (seconds)
@@ -327,7 +327,7 @@ homes:
   # Cooldown between home teleports (seconds)
   cooldown_seconds: 60
 
-  # Future proxy/network mode toggle (no effect unless implemented)
+  # Set to true if you want cross-server teleports (Requires sql storage and redis setup)
   proxy_mode: false
 
   # If proxy_mode is used:

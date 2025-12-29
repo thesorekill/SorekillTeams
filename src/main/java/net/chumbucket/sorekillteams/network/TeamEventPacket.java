@@ -1,13 +1,3 @@
-/*
- * Copyright © 2025 Sorekill
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- */
-
 package net.chumbucket.sorekillteams.network;
 
 import java.util.ArrayList;
@@ -20,11 +10,6 @@ import java.util.UUID;
  *
  * Format (pipe-delimited, escaped with backslash):
  * v1|origin|type|teamId|teamName|actorUuid|actorName|targetUuid|targetName|atMs
- *
- * Escape rules:
- * - '\' escapes the next char
- * - '|' inside fields is encoded as '\|'
- * - '\' inside fields is encoded as '\\'
  */
 public final class TeamEventPacket {
 
@@ -36,7 +21,12 @@ public final class TeamEventPacket {
         MEMBER_KICKED,
         TEAM_DISBANDED,
         TEAM_RENAMED,
-        OWNER_TRANSFERRED
+        OWNER_TRANSFERRED,
+
+        // ✅ Homes (new)
+        HOME_SET,
+        HOME_DELETED,
+        HOME_CLEARED
     }
 
     private final String originServer;
