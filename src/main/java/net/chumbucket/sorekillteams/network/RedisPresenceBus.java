@@ -123,26 +123,38 @@ public final class RedisPresenceBus {
     public boolean isRunning() { return running.get(); }
 
     /**
-     * Mark a player online immediately (set key + publish).
+     * Mark a player online:
+     * ✅ Only publish ONLINE if they were NOT already online network-wide.
+     * This prevents backend-switch spam (Velocity server changes).
      */
     public void markOnline(Player p) {
         if (!running.get() || p == null) return;
 
-        int ttlSeconds = Math.max(10, plugin.getConfig().getInt("redis.presence_ttl_seconds", 25));
         UUID u = p.getUniqueId();
         if (u == null) return;
 
+        int ttlSeconds = Math.max(10, plugin.getConfig().getInt("redis.presence_ttl_seconds", 25));
+
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
             try (Jedis jedis = newJedis()) {
-                jedis.setex(keyPrefix + u, ttlSeconds, originServer);
-                jedis.publish(channel, new PresencePacket(
-                        originServer,
-                        PresencePacket.Type.ONLINE,
-                        u,
-                        safe(p.getName()),
-                        originServer,
-                        System.currentTimeMillis()
-                ).encode());
+                final String key = keyPrefix + u;
+
+                boolean alreadyOnline = jedis.exists(key);
+
+                // Always refresh/take ownership so future OFFLINE ownership checks are correct
+                jedis.setex(key, ttlSeconds, originServer);
+
+                // ✅ Edge-trigger: only publish ONLINE if key did not exist
+                if (!alreadyOnline) {
+                    jedis.publish(channel, new PresencePacket(
+                            originServer,
+                            PresencePacket.Type.ONLINE,
+                            u,
+                            safe(p.getName()),
+                            originServer,
+                            System.currentTimeMillis()
+                    ).encode());
+                }
             } catch (Throwable ignored) {}
         });
     }
@@ -150,21 +162,14 @@ public final class RedisPresenceBus {
     /**
      * Mark a player offline, NO-FLICKER edition.
      *
-     * ✅ FIX #1 (ownership): Only delete/publish OFFLINE if this backend still "owns" the key.
-     * ✅ FIX #2 (no flicker): Delay OFFLINE slightly and re-check key ownership.
-     *
-     * This prevents backend-switch races:
-     *  - Backend B sets ONLINE
-     *  - Backend A later fires quit
-     *  - Without this, A would publish OFFLINE then B publishes ONLINE → flicker
+     * ✅ Only delete/publish OFFLINE if this backend still "owns" the key.
+     * ✅ Delay OFFLINE slightly and re-check key ownership.
      */
     public void markOffline(UUID uuid, String nameHint) {
         if (!running.get() || uuid == null) return;
 
-        // Delay is in ticks because this is a Bukkit plugin; default 15 ticks (~750ms).
         long delayTicks = Math.max(0L, plugin.getConfig().getLong("redis.presence_offline_delay_ticks", 15L));
 
-        // If delay is 0, we still do ownership-check immediately (no-flicker best effort).
         if (delayTicks <= 0L) {
             markOfflineAfterDelay(uuid, nameHint);
             return;
@@ -183,14 +188,12 @@ public final class RedisPresenceBus {
             try (Jedis jedis = newJedis()) {
                 String key = keyPrefix + uuid;
 
-                // If another backend already claimed this player, do NOT delete/publish offline.
+                // If another backend already claimed this player, do NOT publish offline.
                 String current = jedis.get(key);
                 if (current != null && !current.isBlank() && !current.equalsIgnoreCase(originServer)) {
-                    return; // switched servers, keep them online network-wide
+                    return; // switched servers, keep them online
                 }
 
-                // If key already gone, OFFLINE publish is idempotent; but we still avoid flicker
-                // because the delayed check already gave time for a new backend to claim.
                 jedis.del(key);
 
                 jedis.publish(channel, new PresencePacket(
@@ -206,7 +209,7 @@ public final class RedisPresenceBus {
     }
 
     /**
-     * Network-wide online check (Velocity-wide).
+     * Network-wide online check (best effort).
      */
     public boolean isOnlineNetwork(UUID uuid) {
         if (!running.get() || uuid == null) return false;
@@ -217,9 +220,6 @@ public final class RedisPresenceBus {
         }
     }
 
-    /**
-     * Which backend currently holds presence for this player (best effort).
-     */
     public String serverFor(UUID uuid) {
         if (!running.get() || uuid == null) return null;
         try (Jedis jedis = newJedis()) {
@@ -233,6 +233,7 @@ public final class RedisPresenceBus {
         if (!running.get()) return;
 
         long periodTicks = Math.max(40L, plugin.getConfig().getLong("redis.presence_heartbeat_period_ticks", 200L));
+
         heartbeatTaskId = Bukkit.getScheduler().runTaskTimerAsynchronously(plugin, () -> {
             if (!running.get()) return;
 
@@ -243,6 +244,8 @@ public final class RedisPresenceBus {
                     if (p == null) continue;
                     UUID u = p.getUniqueId();
                     if (u == null) continue;
+
+                    // refresh and keep ownership updated
                     jedis.setex(keyPrefix + u, ttlSeconds, originServer);
                 }
             } catch (Throwable ignored) {}

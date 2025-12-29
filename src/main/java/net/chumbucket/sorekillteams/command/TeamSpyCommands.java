@@ -16,11 +16,8 @@ import net.chumbucket.sorekillteams.util.Msg;
 import org.bukkit.entity.Player;
 
 import java.util.Collection;
-import java.util.Locale;
 import java.util.Objects;
 import java.util.stream.Collectors;
-
-import static net.chumbucket.sorekillteams.util.CommandUtil.joinArgsAfter;
 
 public final class TeamSpyCommands implements TeamSubcommandModule {
 
@@ -46,6 +43,7 @@ public final class TeamSpyCommands implements TeamSubcommandModule {
             return true;
         }
 
+        // /team spy
         if (args.length < 2) {
             plugin.msg().send(p, "team_spy_usage");
             return true;
@@ -74,32 +72,16 @@ public final class TeamSpyCommands implements TeamSubcommandModule {
             return true;
         }
 
-        // /team spy clear  (and legacy: /team spy off)
+        // /team spy off|clear
         if (arg1.equalsIgnoreCase("off") || arg1.equalsIgnoreCase("clear")) {
             plugin.teams().clearSpy(p.getUniqueId());
             plugin.msg().send(p, "team_spy_cleared");
             return true;
         }
 
-        // Optional explicit set: /team spy <team> on|off
-        // (still supports plain toggle: /team spy <team>)
-        String mode = null;
-        if (args.length >= 3 && args[2] != null) {
-            String m = args[2].trim().toLowerCase(Locale.ROOT);
-            if (m.equals("on") || m.equals("enable") || m.equals("true")) mode = "on";
-            else if (m.equals("off") || m.equals("disable") || m.equals("false")) mode = "off";
-        }
-
-        // ✅ Team name is everything after "spy" (index 1), but if a mode is present, exclude it
-        final String teamNameRaw;
-        if (mode != null) {
-            // join args after index 1 but stop before last arg (mode)
-            teamNameRaw = joinArgsBetween(args, 1, args.length - 2);
-        } else {
-            teamNameRaw = joinArgsAfter(args, 1);
-        }
-
-        if (teamNameRaw == null || teamNameRaw.isBlank()) {
+        // ✅ Robust join of args[1..] (no dependency on joinArgsAfter semantics)
+        String teamNameRaw = joinFrom(args, 1);
+        if (teamNameRaw.isBlank()) {
             plugin.msg().send(p, "team_spy_usage");
             return true;
         }
@@ -112,21 +94,7 @@ public final class TeamSpyCommands implements TeamSubcommandModule {
             return true;
         }
 
-        boolean enabled;
-        if (mode == null) {
-            enabled = plugin.teams().toggleSpy(p.getUniqueId(), team.getId());
-        } else {
-            boolean currently = plugin.teams().getSpiedTeams(p.getUniqueId()).stream()
-                    .anyMatch(t -> t != null && team.getId().equals(t.getId()));
-
-            boolean wantOn = mode.equals("on");
-            if (wantOn == currently) {
-                enabled = currently;
-            } else {
-                enabled = plugin.teams().toggleSpy(p.getUniqueId(), team.getId());
-            }
-        }
-
+        boolean enabled = plugin.teams().toggleSpy(p.getUniqueId(), team.getId());
         if (enabled) {
             plugin.msg().send(p, "team_spy_on",
                     "{team}", Msg.color(team.getName())
@@ -145,22 +113,14 @@ public final class TeamSpyCommands implements TeamSubcommandModule {
         return true;
     }
 
-    /**
-     * Join args from (afterIndex+1) through endIndexInclusive as a single space-separated string.
-     * Example: joinArgsBetween(args, 1, 2) joins args[2]..args[2]
-     */
-    private static String joinArgsBetween(String[] args, int afterIndex, int endIndexInclusive) {
-        if (args == null) return "";
-        int start = afterIndex + 1;
-        int end = Math.min(endIndexInclusive, args.length - 1);
-        if (start > end) return "";
-
+    private static String joinFrom(String[] args, int startIndex) {
+        if (args == null || startIndex < 0 || startIndex >= args.length) return "";
         StringBuilder sb = new StringBuilder();
-        for (int i = start; i <= end; i++) {
-            String a = args[i];
-            if (a == null) continue;
-            if (sb.length() > 0) sb.append(' ');
-            sb.append(a);
+        for (int i = startIndex; i < args.length; i++) {
+            String s = args[i];
+            if (s == null) continue;
+            if (!sb.isEmpty()) sb.append(' ');
+            sb.append(s);
         }
         return sb.toString().trim();
     }

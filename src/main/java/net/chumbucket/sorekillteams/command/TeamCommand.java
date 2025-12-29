@@ -30,14 +30,11 @@ public final class TeamCommand implements CommandExecutor {
 
     private final SorekillTeamsPlugin plugin;
 
-    // Shared deps
     private final TeamNameValidator nameValidator;
 
-    // Homes deps
     private final TeamHomeCooldowns homeCooldowns;
     private final TeamHomeWarmupManager homeWarmups;
 
-    // Modules list
     private final List<TeamSubcommandModule> modules = new ArrayList<>();
 
     public TeamCommand(SorekillTeamsPlugin plugin) {
@@ -49,7 +46,6 @@ public final class TeamCommand implements CommandExecutor {
         this.homeWarmups = new TeamHomeWarmupManager(plugin);
         Bukkit.getPluginManager().registerEvents(homeWarmups, plugin);
 
-        // Register modules in the order you want them evaluated
         modules.add(new TeamMenuCommands(plugin));
         modules.add(new TeamAdminCommands(plugin));
         modules.add(new TeamChatCommands(plugin));
@@ -74,14 +70,10 @@ public final class TeamCommand implements CommandExecutor {
             return true;
         }
 
-        // ✅ Option 3: If SQL mode, refresh membership + snapshot (TTL-guarded + async inside plugin)
-        // Safe in YAML too (methods no-op in yaml mode).
         try {
             plugin.ensureTeamFreshFromSql(p.getUniqueId());
             plugin.ensureTeamsSnapshotFreshFromSql();
-        } catch (Throwable ignored) {
-            // keep commands responsive even if refresh fails
-        }
+        } catch (Throwable ignored) {}
 
         execute(p, cmd, label, args);
         return true;
@@ -91,7 +83,6 @@ public final class TeamCommand implements CommandExecutor {
         final boolean menusEnabled = plugin.getConfig().getBoolean("menus.enabled", true);
         final boolean openOnNoArgs = plugin.getConfig().getBoolean("menus.open_on_team_command_no_args", true);
 
-        // /team with no args opens team info if you're in a team, otherwise main
         if (args.length == 0) {
             if (menusEnabled && openOnNoArgs && plugin.menuRouter() != null) {
                 boolean inTeam = plugin.teams().getTeamByPlayer(p.getUniqueId()).isPresent();
@@ -109,9 +100,7 @@ public final class TeamCommand implements CommandExecutor {
 
         try {
             for (TeamSubcommandModule m : modules) {
-                if (m.handle(p, sub, args, debug)) {
-                    return;
-                }
+                if (m.handle(p, sub, args, debug)) return;
             }
 
             plugin.msg().send(p, "unknown_command");
@@ -121,8 +110,8 @@ public final class TeamCommand implements CommandExecutor {
             CommandErrors.send(p, plugin, ex);
 
             if (debug) {
-                plugin.getLogger().info("[TEAM-DBG] TeamServiceException sub=" + sub + " player=" + p.getName() + " code=" +
-                        (ex.code() == null ? "null" : ex.code().name()));
+                plugin.getLogger().info("[TEAM-DBG] TeamServiceException sub=" + sub + " player=" + p.getName()
+                        + " code=" + (ex.code() == null ? "null" : ex.code().name()));
             }
 
         } catch (Exception ex) {

@@ -13,9 +13,5 @@ package net.chumbucket.sorekillteams.command;
 import org.bukkit.entity.Player;
 
 public interface TeamSubcommandModule {
-    /**
-     * @return true if this module handled the command (even if it showed an error/usage),
-     *         false if it does not apply to this subcommand.
-     */
     boolean handle(Player player, String sub, String[] args, boolean debug);
 }

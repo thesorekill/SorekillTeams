@@ -131,15 +131,14 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     private volatile boolean redisLibsLoaded = false;
 
     // =========================================================
-    // ✅ Presence de-dupe (stop spam on backend swaps)
+    // ✅ Presence de-dupe (stop spam / only proxy join+leave should message)
     //
-    // Goal: only broadcast ONLINE when they join proxy, and OFFLINE when they leave proxy.
-    // On backend swap: you'll see OFFLINE then ONLINE close together; we suppress both.
+    // IMPORTANT:
+    // - We now rely on RedisPresenceBus being "edge-triggered" for ONLINE:
+    //   it only publishes ONLINE when key didn't exist.
+    // - We still keep local dedupe in case of race/reconnect/replay.
     //
-    // How:
-    // - Track last known "network online state" per player UUID.
-    // - Apply a "swap window" where OFFLINE quickly followed by ONLINE is treated as MOVE, not quit/join.
-    // - Also suppress duplicate ONLINE/ OFFLINE that match current state.
+    // This dedupe ONLY affects MESSAGE BROADCASTING (not Redis key ownership).
     // =========================================================
     private final ConcurrentHashMap<UUID, PresenceState> presenceState = new ConcurrentHashMap<>();
 
@@ -150,8 +149,8 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     }
 
     private long presenceSwapWindowMs() {
-        // default 4000ms works well for Velocity/Bungee server-switch bursts
-        return Math.max(1000L, getConfig().getLong("redis.presence.swap_window_ms", 4000L));
+        // Backend swap bursts usually < 2s. Keep a little padding.
+        return Math.max(1000L, getConfig().getLong("redis.presence.swap_window_ms", 2500L));
     }
 
     @Override
@@ -283,6 +282,9 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             getLogger().severe("Reload failed while loading teams. Keeping previous in-memory teams.");
             getLogger().severe("Reason: " + e.getClass().getSimpleName() + ": " + e.getMessage());
         }
+
+        // reset dedupe state on reload to avoid “stuck” suppressions
+        presenceState.clear();
 
         syncHomesWiringFromConfig(false);
         loadHomesBestEffort("reload");
@@ -444,21 +446,13 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         bus.publish(packet);
     }
 
-    /**
-     * Called by your local listener when the player "joins".
-     * With Velocity/Bungee, backend swaps can trigger quit/join on different servers.
-     * We still publish, but remote side will dedupe and treat swap as MOVE.
-     */
     public void markPresenceOnline(Player p) {
         RedisPresenceBus pb = this.presenceBus;
         if (pb == null || !pb.isRunning() || p == null) return;
+        // RedisPresenceBus should be edge-triggered for ONLINE
         pb.markOnline(p);
     }
 
-    /**
-     * Called by your local listener when the player "quits".
-     * With Velocity/Bungee, backend swaps can trigger this; remote side will dedupe.
-     */
     public void markPresenceOffline(UUID uuid, String nameHint) {
         RedisPresenceBus pb = this.presenceBus;
         if (pb == null || !pb.isRunning() || uuid == null) return;
@@ -478,7 +472,6 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     public void onRemoteInviteEvent(InvitePacket pkt) {
         if (pkt == null) return;
 
-        // Keep caches convergent quickly (TTL guarded inside these methods)
         try {
             ensureTeamsSnapshotFreshFromSql();
             ensureTeamFreshFromSql(pkt.inviteeUuid());
@@ -521,6 +514,81 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         }
     }
 
+    // =========================================================
+    // ✅ Remote TeamEvent de-dupe (prevents double-processing)
+    // =========================================================
+    private final ConcurrentHashMap<String, Long> recentTeamEvents = new ConcurrentHashMap<>();
+
+    private final java.util.concurrent.ConcurrentHashMap<UUID, Long> recentKickNotifies = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private long teamEventDedupeWindowMs() {
+        return Math.max(250L, getConfig().getLong("redis.team_events.dedupe_window_ms", 4000L));
+    }
+
+    private boolean shouldProcessTeamEventOnce(TeamEventPacket pkt) {
+        if (pkt == null || pkt.type() == null || pkt.teamId() == null) return false;
+
+        long now = System.currentTimeMillis();
+        long window = teamEventDedupeWindowMs();
+
+        // IMPORTANT:
+        // - DO NOT include pkt.atMs() (duplicates can have different timestamps)
+        // - DO NOT include originServer (reconnect/resubscribe edge cases)
+        // We want to collapse "same meaning" events within the window.
+        final String key =
+                pkt.type().name() + "|" +
+                pkt.teamId() + "|" +
+                String.valueOf(pkt.actorUuid()) + "|" +
+                String.valueOf(pkt.targetUuid());
+
+        Long prev = recentTeamEvents.get(key);
+        if (prev != null) {
+            long dt = now - prev;
+            if (dt >= 0 && dt <= window) {
+                return false;
+            }
+        }
+
+        recentTeamEvents.put(key, now);
+
+        // cheap cleanup sometimes
+        if ((now & 63) == 0) {
+            long killBefore = now - (window * 4L);
+            for (var it = recentTeamEvents.entrySet().iterator(); it.hasNext(); ) {
+                var e = it.next();
+                if (e.getValue() < killBefore) it.remove();
+            }
+        }
+
+        return true;
+    }
+
+    private boolean shouldNotifyKickedOnce(UUID targetUuid) {
+        if (targetUuid == null) return false;
+
+        long now = System.currentTimeMillis();
+        long window = Math.max(250L, getConfig().getLong("redis.team_events.kick_notify_dedupe_ms", 4000L));
+
+        Long prev = recentKickNotifies.get(targetUuid);
+        if (prev != null) {
+            long dt = now - prev;
+            if (dt >= 0 && dt <= window) return false;
+        }
+
+        recentKickNotifies.put(targetUuid, now);
+
+        // occasional cleanup
+        if ((now & 63) == 0) {
+            long killBefore = now - (window * 4L);
+            for (var it = recentKickNotifies.entrySet().iterator(); it.hasNext(); ) {
+                var e = it.next();
+                if (e.getValue() < killBefore) it.remove();
+            }
+        }
+
+        return true;
+    }
+
     /**
      * Called by RedisTeamEventBus on main thread.
      * Messaging is event-driven (Redis). SQL refresh is state-only.
@@ -528,7 +596,10 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     public void onRemoteTeamEvent(TeamEventPacket pkt) {
         if (pkt == null) return;
 
-        // Best-effort cache convergence (SQL mode)
+        if (!shouldProcessTeamEventOnce(pkt)) {
+            return;
+        }
+
         try {
             ensureTeamsSnapshotFreshFromSql();
             if (pkt.actorUuid() != null) ensureTeamFreshFromSql(pkt.actorUuid());
@@ -545,6 +616,11 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
                         "{player}", safe(pkt.targetName(), safe(pkt.actorName(), "unknown")),
                         "{team}", Msg.color(safe(pkt.teamName(), "Team"))
                 };
+
+                // ✅ Optional: if the joiner is on THIS backend, you can also send them a "you joined" message
+                // (only if you have such a key). Otherwise leave it to the broadcaster.
+                // Player joiner = pkt.targetUuid() != null ? Bukkit.getPlayer(pkt.targetUuid()) : null;
+                // if (joiner != null && joiner.isOnline()) { ... }
             }
             case MEMBER_LEFT -> {
                 key = "team_member_left";
@@ -552,6 +628,9 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
                         "{player}", safe(pkt.targetName(), safe(pkt.actorName(), "unknown")),
                         "{team}", Msg.color(safe(pkt.teamName(), "Team"))
                 };
+
+                // ✅ If the leaver is on THIS backend, they may already have gotten "team_left" locally.
+                // Usually no extra direct message needed here.
             }
             case MEMBER_KICKED -> {
                 key = "team_member_kicked_broadcast";
@@ -559,12 +638,28 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
                         "{player}", safe(pkt.targetName(), "unknown"),
                         "{team}", Msg.color(safe(pkt.teamName(), "Team"))
                 };
+
+                // Notify the kicked player (only once) if they are on THIS backend
+                if (pkt.targetUuid() != null && shouldNotifyKickedOnce(pkt.targetUuid())) {
+                    Player kicked = Bukkit.getPlayer(pkt.targetUuid());
+                    if (kicked != null && kicked.isOnline()) {
+                        msg().send(kicked, "team_kick_target",
+                                "{team}", Msg.color(safe(pkt.teamName(), "Team")),
+                                "{by}", safe(pkt.actorName(), "unknown")
+                        );
+                    }
+                }
             }
             case TEAM_DISBANDED -> {
                 key = "team_team_disbanded";
                 pairs = new String[]{
                         "{team}", Msg.color(safe(pkt.teamName(), "Team"))
                 };
+
+                // ✅ If you want the owner to also get a direct message on THIS backend,
+                // make sure the owner isn't excluded by your broadcast call.
+                // (Your existing broadcast excludes actor/target; for disband targetUuid is null,
+                // actorUuid is owner. If you want owner to see it too, DON'T exclude actorUuid for disband.)
             }
             case TEAM_RENAMED -> {
                 key = "team_renamed_broadcast";
@@ -580,14 +675,23 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
                         "{owner}", safe(pkt.targetName(), "unknown"),
                         "{team}", Msg.color(safe(pkt.teamName(), "Team"))
                 };
+
+                // ✅ Optional: also notify the new owner directly if they're on THIS backend
+                if (pkt.targetUuid() != null) {
+                    Player newOwner = Bukkit.getPlayer(pkt.targetUuid());
+                    if (newOwner != null && newOwner.isOnline()) {
+                        msg().send(newOwner, "team_transfer_received",
+                                "{team}", Msg.color(safe(pkt.teamName(), "Team")),
+                                "{by}", safe(pkt.actorName(), "unknown")
+                        );
+                    }
+                }
             }
             default -> { return; }
         }
 
-        // ✅ IMPORTANT: broadcast first (membership still cached), then evict cache if needed
         broadcastToLocalOnlineMembersOfTeam(pkt.teamId(), key, pairs, pkt.actorUuid(), pkt.targetUuid());
 
-        // ✅ NOW cleanup cache for disband to prevent stale membership
         if (pkt.type() == TeamEventPacket.Type.TEAM_DISBANDED && teams instanceof SimpleTeamService simple) {
             try { simple.evictCachedTeam(pkt.teamId()); } catch (Throwable ignored) {}
         }
@@ -606,7 +710,6 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             UUID u = p.getUniqueId();
             if (u == null) continue;
 
-            // exclude check
             if (exclude != null) {
                 boolean skip = false;
                 for (UUID ex : exclude) {
@@ -624,38 +727,32 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     }
 
     // =========================================================
-    // ✅ Presence (dedup + suppress backend swap spam)
+    // ✅ Presence: broadcast to teammates on THIS backend
+    // with dedupe so we only message proxy join/leave.
     // =========================================================
 
-    /**
-     * Called by RedisPresenceBus on main thread.
-     * We suppress "backend swap spam" by deduping and by detecting OFFLINE->ONLINE within a small window.
-     */
     public void onRemotePresence(PresencePacket pkt) {
         if (pkt == null || pkt.playerUuid() == null) return;
 
-        // nudge cache convergence
         try { ensureTeamFreshFromSql(pkt.playerUuid()); } catch (Throwable ignored) {}
 
-        // ✅ Dedup/swap suppression:
         if (!shouldBroadcastPresence(pkt)) {
             if (debug != null && debug.enabled()) {
-                getLogger().info("[PRESENCE-DBG] suppressed " + pkt.type() + " for " + pkt.playerUuid()
-                        + " name=" + safe(pkt.playerName(), "?"));
+                getLogger().info("[PRESENCE-DBG] suppressed " + pkt.type()
+                        + " uuid=" + pkt.playerUuid()
+                        + " name=" + safe(pkt.playerName(), "?")
+                        + " origin=" + safe(pkt.originServer(), "?"));
             }
             return;
         }
 
         Team team = (teams == null) ? null : teams.getTeamByPlayer(pkt.playerUuid()).orElse(null);
         if (team == null) {
-            // try once shortly after (membership refresh may complete)
             Bukkit.getScheduler().runTaskLater(this, () -> {
                 Team t2 = (teams == null) ? null : teams.getTeamByPlayer(pkt.playerUuid()).orElse(null);
                 if (t2 == null) return;
-
-                // even on delayed attempt, don't re-spam if state changed again
+                // don't re-spam if state changed while waiting
                 if (!shouldBroadcastPresence(pkt)) return;
-
                 broadcastPresenceToLocalTeammates(t2.getId(), pkt);
             }, 10L);
             return;
@@ -664,28 +761,22 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         broadcastPresenceToLocalTeammates(team.getId(), pkt);
     }
 
-    /**
-     * Returns true if this presence event should create a message (proxy join/leave),
-     * false if it's a duplicate or a backend swap.
-     */
     private boolean shouldBroadcastPresence(PresencePacket pkt) {
         UUID uuid = pkt.playerUuid();
         long now = System.currentTimeMillis();
 
         PresenceState st = presenceState.computeIfAbsent(uuid, k -> new PresenceState());
-
-        long swapWindow = presenceSwapWindowMs();
+        long window = presenceSwapWindowMs();
 
         if (pkt.type() == PresencePacket.Type.ONLINE) {
             // duplicate ONLINE while already online -> ignore
             if (st.online) return false;
 
-            // if we recently got OFFLINE, treat as backend swap and suppress both
+            // OFFLINE followed quickly by ONLINE => treat as backend swap, suppress
             long dt = now - st.lastOfflineMs;
-            if (st.lastOfflineMs > 0 && dt >= 0 && dt <= swapWindow) {
+            if (st.lastOfflineMs > 0 && dt >= 0 && dt <= window) {
                 st.online = true;
                 st.lastOnlineMs = now;
-                // suppress this ONLINE (and the prior OFFLINE will have been suppressed or will be)
                 return false;
             }
 
@@ -695,17 +786,13 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         }
 
         // OFFLINE
-        if (!st.online) {
-            // duplicate OFFLINE while already offline -> ignore
-            return false;
-        }
+        if (!st.online) return false; // duplicate OFFLINE
 
-        // if we recently got ONLINE, likely a backend swap (quit from old backend)
+        // ONLINE followed quickly by OFFLINE => backend swap quit from old server, suppress
         long dt = now - st.lastOnlineMs;
-        if (st.lastOnlineMs > 0 && dt >= 0 && dt <= swapWindow) {
+        if (st.lastOnlineMs > 0 && dt >= 0 && dt <= window) {
             st.online = false;
             st.lastOfflineMs = now;
-            // suppress OFFLINE
             return false;
         }
 
@@ -752,10 +839,10 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         return (v == null || v.isBlank()) ? fallback : v;
     }
 
-    /**
-     * Called by Redis subscriber to deliver a remote message to online teammates on THIS backend.
-     * IMPORTANT: include owner + members, and do not echo to sender.
-     */
+    // =========================================================
+    // Team chat delivery from Redis
+    // =========================================================
+
     public void broadcastRemoteTeamChat(UUID teamId, UUID senderUuid, String senderName, String formattedMessage) {
         if (teamId == null || senderUuid == null) return;
         if (formattedMessage == null || formattedMessage.isBlank()) return;
@@ -769,6 +856,12 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         String msgOut = formattedMessage;
         if (debugChat) msgOut = msgOut + Msg.color(" &8[&bREMOTE&8]");
 
+        // Track recipients we already messaged to prevent duplicates (member + spy)
+        java.util.HashSet<UUID> sent = new java.util.HashSet<>();
+
+        // ---------------------------------------------------------
+        // 1) Deliver to team members/owner on this backend
+        // ---------------------------------------------------------
         java.util.LinkedHashSet<UUID> targets = new java.util.LinkedHashSet<>();
         if (t.getOwner() != null) targets.add(t.getOwner());
         if (t.getMembers() != null) targets.addAll(t.getMembers());
@@ -780,7 +873,52 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             Player p = Bukkit.getPlayer(u);
             if (p != null && p.isOnline()) {
                 p.sendMessage(msgOut);
+                sent.add(u);
             }
+        }
+
+        // ---------------------------------------------------------
+        // 2) Deliver to spies on this backend
+        //    A spy is: has permission + is spying this teamId
+        // ---------------------------------------------------------
+        final boolean spyEnabled = getConfig().getBoolean("chat.spy.enabled", true);
+        if (!spyEnabled) return;
+
+        final String spyPerm = "sorekillteams.spy";
+
+        for (Player viewer : Bukkit.getOnlinePlayers()) {
+            if (viewer == null || !viewer.isOnline()) continue;
+
+            UUID vu = viewer.getUniqueId();
+            if (vu == null) continue;
+            if (vu.equals(senderUuid)) continue;
+            if (sent.contains(vu)) continue; // already got it as a member
+
+            if (!viewer.hasPermission(spyPerm)) continue;
+
+            try {
+                // If viewer is spying this team, they should receive it
+                boolean spyingThisTeam = false;
+                Collection<Team> spied = teams.getSpiedTeams(vu);
+
+                if (spied != null) {
+                    for (Team st : spied) {
+                        if (st != null && teamId.equals(st.getId())) {
+                            spyingThisTeam = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!spyingThisTeam) continue;
+
+            } catch (Throwable ignored) {
+                continue;
+            }
+
+            // Optional prefix to make it clear why they see it
+            viewer.sendMessage(Msg.color("&8[&cSPY&8] ") + msgOut);
+            sent.add(vu);
         }
     }
 
@@ -1210,7 +1348,7 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     private String getMenusFileNameSafe() {
         String v = null;
         try { v = getConfig().getString("files.menus", "menus.yml"); }
-       catch (Exception ignored) {}
+        catch (Exception ignored) {}
         return (v == null || v.isBlank()) ? "menus.yml" : v.trim();
     }
 

@@ -29,7 +29,6 @@ import java.util.UUID;
 public final class TeamEventPacket {
 
     public static final String VERSION = "v1";
-    private static final int PARTS = 10;
 
     public enum Type {
         MEMBER_JOINED,
@@ -94,7 +93,6 @@ public final class TeamEventPacket {
     public long atMs() { return atMs; }
 
     public String encode() {
-        // Keep exact field order/shape.
         return VERSION + "|" +
                 esc(originServer) + "|" +
                 type.name() + "|" +
@@ -110,30 +108,20 @@ public final class TeamEventPacket {
     public static TeamEventPacket decode(String raw) {
         if (raw == null || raw.isBlank()) return null;
 
-        // FIX: enforce exact part count so garbage suffix/prefix doesn't silently parse wrong.
-        List<String> parts = splitEscaped(raw, '|', PARTS);
-        if (parts.size() != PARTS) return null;
+        List<String> parts = splitEscaped(raw, '|', 10);
+        if (parts.size() != 10) return null;
 
         if (!VERSION.equals(parts.get(0))) return null;
 
         String origin = parts.get(1);
-        if (origin == null || origin.isBlank()) return null;
-
         Type type;
-        try {
-            type = Type.valueOf(parts.get(2));
-        } catch (Exception ignored) {
-            return null;
-        }
+        try { type = Type.valueOf(parts.get(2)); }
+        catch (Exception e) { return null; }
 
         UUID teamId = safeUuid(parts.get(3));
-        if (teamId == null) return null;
-
         String teamName = parts.get(4);
 
         UUID actorUuid = safeUuid(parts.get(5));
-        if (actorUuid == null) return null;
-
         String actorName = parts.get(6);
 
         UUID targetUuid = safeUuidOrNull(parts.get(7));
@@ -141,25 +129,17 @@ public final class TeamEventPacket {
 
         long atMs = safeLong(parts.get(9));
 
+        if (origin == null || origin.isBlank()) return null;
+        if (teamId == null || actorUuid == null) return null;
+
         return new TeamEventPacket(origin, type, teamId, teamName, actorUuid, actorName, targetUuid, targetName, atMs);
     }
 
-    // -------------------------
-    // Escaping
-    // -------------------------
-
     private static String esc(String s) {
         if (s == null || s.isEmpty()) return "";
-        // escape backslash first, then pipe
         return s.replace("\\", "\\\\").replace("|", "\\|");
     }
 
-    /**
-     * Unescape a single field.
-     * Rules:
-     * - '\' escapes the next char (whatever it is)
-     * - trailing '\' is preserved literally
-     */
     private static String unesc(String s) {
         if (s == null || s.isEmpty()) return "";
         StringBuilder sb = new StringBuilder(s.length());
@@ -179,17 +159,8 @@ public final class TeamEventPacket {
         return sb.toString();
     }
 
-    /**
-     * Split a string by a delimiter char, honoring backslash escapes.
-     * Returns unescaped fields.
-     *
-     * FIX: previously this ignored expectedParts and would happily return 11+ parts.
-     * Now we enforce exact part count:
-     * - If we exceed expectedParts, return empty list (decode fails).
-     * - If we end with fewer than expectedParts, return what we have (decode fails).
-     */
     private static List<String> splitEscaped(String raw, char delim, int expectedParts) {
-        List<String> out = new ArrayList<>(Math.max(1, expectedParts));
+        List<String> out = new ArrayList<>(expectedParts);
 
         StringBuilder cur = new StringBuilder(raw.length());
         boolean escaping = false;
@@ -211,11 +182,6 @@ public final class TeamEventPacket {
             if (c == delim) {
                 out.add(unesc(cur.toString()));
                 cur.setLength(0);
-
-                // too many parts -> bail early
-                if (expectedParts > 0 && out.size() > expectedParts) {
-                    return List.of();
-                }
                 continue;
             }
 
@@ -223,18 +189,8 @@ public final class TeamEventPacket {
         }
 
         out.add(unesc(cur.toString()));
-
-        if (expectedParts > 0 && out.size() != expectedParts) {
-            // Let caller decide; decode checks size == expectedParts anyway.
-            return out;
-        }
-
         return out;
     }
-
-    // -------------------------
-    // Safe parsing
-    // -------------------------
 
     private static UUID safeUuid(String s) {
         if (s == null || s.isBlank()) return null;

@@ -40,6 +40,7 @@ public final class TeamOnlineStatusListener implements Listener {
 
         // ✅ Network-wide presence (Velocity-wide online status)
         if (plugin.isPresenceNetworkEnabled()) {
+            // markOnline() will now be "edge-triggered" (only publishes if newly online)
             plugin.markPresenceOnline(p);
             return;
         }

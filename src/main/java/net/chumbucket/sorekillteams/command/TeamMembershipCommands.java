@@ -12,6 +12,7 @@ package net.chumbucket.sorekillteams.command;
 
 import net.chumbucket.sorekillteams.SorekillTeamsPlugin;
 import net.chumbucket.sorekillteams.model.Team;
+import net.chumbucket.sorekillteams.network.TeamEventPacket;
 import net.chumbucket.sorekillteams.util.Msg;
 import net.chumbucket.sorekillteams.util.TeamNameValidator;
 import org.bukkit.Bukkit;
@@ -51,8 +52,26 @@ public final class TeamMembershipCommands implements TeamSubcommandModule {
             return true;
         }
 
+        // Capture before leaving for network event
+        Team before = plugin.teams().getTeamByPlayer(p.getUniqueId()).orElse(null);
+        UUID teamId = before != null ? before.getId() : null;
+        String teamName = before != null ? before.getName() : "Team";
+
         plugin.teams().leaveTeam(p.getUniqueId());
         plugin.msg().send(p, "team_left");
+
+        // ✅ Cross-server event (so other backends broadcast)
+        publishTeamEventIfReady(new TeamEventPacket(
+                plugin.networkServerName(),
+                TeamEventPacket.Type.MEMBER_LEFT,
+                teamId,
+                teamName,
+                p.getUniqueId(),
+                safeName(p.getName()),
+                p.getUniqueId(), // target = leaver
+                safeName(p.getName()),
+                System.currentTimeMillis()
+        ));
 
         reopenAfterMembershipChange(p);
 
@@ -66,7 +85,27 @@ public final class TeamMembershipCommands implements TeamSubcommandModule {
             return true;
         }
 
-        plugin.teams().disbandTeam(p.getUniqueId());
+        // ✅ Capture team before disband (after action it may be gone)
+        Team before = plugin.teams().getTeamByPlayer(p.getUniqueId()).orElse(null);
+        UUID teamId = before != null ? before.getId() : null;
+        String teamName = before != null ? before.getName() : "Team";
+        UUID owner = p.getUniqueId();
+        String ownerName = safeName(p.getName());
+
+        plugin.teams().disbandTeam(owner);
+
+        // ✅ Cross-server disband event (command path was missing this)
+        publishTeamEventIfReady(new TeamEventPacket(
+                plugin.networkServerName(),
+                TeamEventPacket.Type.TEAM_DISBANDED,
+                teamId,
+                teamName,
+                owner,
+                ownerName,
+                null,
+                "",
+                System.currentTimeMillis()
+        ));
 
         reopenMainAfterDisband(p);
 
@@ -92,6 +131,7 @@ public final class TeamMembershipCommands implements TeamSubcommandModule {
         }
 
         Team before = plugin.teams().getTeamByPlayer(p.getUniqueId()).orElse(null);
+        UUID teamId = before != null ? before.getId() : null;
         String oldName = before != null ? before.getName() : "Team";
 
         plugin.teams().renameTeam(p.getUniqueId(), v.plainName());
@@ -103,6 +143,19 @@ public final class TeamMembershipCommands implements TeamSubcommandModule {
                 "{old}", Msg.color(oldName),
                 "{team}", Msg.color(newName)
         );
+
+        // ✅ Cross-server rename event: store old name in targetName (matches your onRemoteTeamEvent mapping)
+        publishTeamEventIfReady(new TeamEventPacket(
+                plugin.networkServerName(),
+                TeamEventPacket.Type.TEAM_RENAMED,
+                teamId,
+                newName,
+                p.getUniqueId(),
+                safeName(p.getName()),
+                null,
+                oldName, // targetName used as "{old}" on remote
+                System.currentTimeMillis()
+        ));
 
         reopenTeamInfoIfInMenu(p);
 
@@ -131,27 +184,28 @@ public final class TeamMembershipCommands implements TeamSubcommandModule {
         }
 
         if (targetUuid.equals(p.getUniqueId())) {
-            // don't let people kick themselves; existing service would reject if owner,
-            // but this gives a nicer UX.
             plugin.msg().send(p, "team_cannot_kick_self");
             return true;
         }
 
-        // capture team name before kick (since membership may shift)
+        // ✅ Capture team snapshot BEFORE kick (membership may change)
         Team before = plugin.teams().getTeamByPlayer(p.getUniqueId()).orElse(null);
+        UUID teamId = before != null ? before.getId() : null;
         String teamName = (before != null ? before.getName() : "Team");
 
-        plugin.teams().kickMember(p.getUniqueId(), targetUuid);
+        // Capture target display name BEFORE kick too
+        String targetName = safeName(nameOf(targetUuid));
 
-        String targetName = nameOf(targetUuid);
+        plugin.teams().kickMember(p.getUniqueId(), targetUuid);
 
         plugin.msg().send(p, "team_kick_success",
                 "{player}", targetName,
                 "{team}", Msg.color(teamName)
         );
 
+        // Local notify if on same backend
         Player targetOnline = Bukkit.getPlayer(targetUuid);
-        if (targetOnline != null) {
+        if (targetOnline != null && targetOnline.isOnline()) {
             plugin.msg().send(targetOnline, "team_kick_target",
                     "{team}", Msg.color(teamName),
                     "{by}", p.getName()
@@ -159,6 +213,21 @@ public final class TeamMembershipCommands implements TeamSubcommandModule {
 
             try { plugin.ensureTeamFreshFromSql(targetUuid); } catch (Throwable ignored) {}
         }
+
+        // ✅ Cross-server event so:
+        // - other backends broadcast to teammates
+        // - the kicked player gets notified on their backend via plugin.onRemoteTeamEvent direct-target logic
+        publishTeamEventIfReady(new TeamEventPacket(
+                plugin.networkServerName(),
+                TeamEventPacket.Type.MEMBER_KICKED,
+                teamId,
+                teamName,
+                p.getUniqueId(),
+                safeName(p.getName()),
+                targetUuid,
+                targetName,
+                System.currentTimeMillis()
+        ));
 
         reopenTeamInfoIfInMenu(p);
 
@@ -185,11 +254,14 @@ public final class TeamMembershipCommands implements TeamSubcommandModule {
             return true;
         }
 
+        // Capture team before transfer
+        Team before = plugin.teams().getTeamByPlayer(p.getUniqueId()).orElse(null);
+        UUID teamId = before != null ? before.getId() : null;
+        String teamName = before != null ? before.getName() : "Team";
+
         plugin.teams().transferOwnership(p.getUniqueId(), targetUuid);
 
-        String targetName = nameOf(targetUuid);
-        Team t = plugin.teams().getTeamByPlayer(targetUuid).orElse(null);
-        String teamName = (t != null ? t.getName() : "Team");
+        String targetName = safeName(nameOf(targetUuid));
 
         plugin.msg().send(p, "team_transfer_success",
                 "{player}", targetName,
@@ -197,18 +269,46 @@ public final class TeamMembershipCommands implements TeamSubcommandModule {
         );
 
         Player targetOnline = Bukkit.getPlayer(targetUuid);
-        if (targetOnline != null) {
+        if (targetOnline != null && targetOnline.isOnline()) {
             plugin.msg().send(targetOnline, "team_transfer_received",
                     "{team}", Msg.color(teamName),
                     "{by}", p.getName()
             );
         }
 
+        // ✅ Cross-server transfer event: targetName becomes new owner name on remote broadcast
+        publishTeamEventIfReady(new TeamEventPacket(
+                plugin.networkServerName(),
+                TeamEventPacket.Type.OWNER_TRANSFERRED,
+                teamId,
+                teamName,
+                p.getUniqueId(),
+                safeName(p.getName()),
+                targetUuid,
+                targetName,
+                System.currentTimeMillis()
+        ));
+
         reopenTeamInfoIfInMenu(p);
         if (targetOnline != null) reopenTeamInfoIfInMenu(targetOnline);
 
         if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " transferred ownership -> " + targetUuid);
         return true;
+    }
+
+    // ---------------------------------------------------------
+    // Team event publish helpers
+    // ---------------------------------------------------------
+
+    private void publishTeamEventIfReady(TeamEventPacket pkt) {
+        if (pkt == null) return;
+        // teamId is mandatory for routing broadcasts on remote
+        if (pkt.teamId() == null) return;
+        plugin.publishTeamEvent(pkt);
+    }
+
+    private static String safeName(String s) {
+        return s == null ? "" : s;
     }
 
     // ---------------------------------------------------------
@@ -220,31 +320,25 @@ public final class TeamMembershipCommands implements TeamSubcommandModule {
         String s = nameOrUuid.trim();
         if (s.isEmpty()) return null;
 
-        // If it's a UUID string, accept it.
         try {
             return UUID.fromString(s);
         } catch (IllegalArgumentException ignored) {}
 
-        // 1) Paper: only return if it's actually cached (safe, not fabricated)
         UUID cached = getOfflinePlayerUuidIfCached(s);
         if (cached != null) return cached;
 
-        // 2) Spigot fallback: deprecated API, but we only accept it if hasPlayedBefore()
         return getOfflinePlayerUuidIfHasPlayedBefore(s);
     }
 
     private UUID getOfflinePlayerUuidIfCached(String name) {
         try {
-            // Paper only: Bukkit.getOfflinePlayerIfCached(String)
             java.lang.reflect.Method m = Bukkit.class.getMethod("getOfflinePlayerIfCached", String.class);
             Object off = m.invoke(null, name);
             if (off instanceof org.bukkit.OfflinePlayer op) {
                 UUID id = op.getUniqueId();
                 if (id != null) return id;
             }
-        } catch (Throwable ignored) {
-            // Not Paper / method missing / reflection blocked
-        }
+        } catch (Throwable ignored) { }
         return null;
     }
 
@@ -254,7 +348,6 @@ public final class TeamMembershipCommands implements TeamSubcommandModule {
             org.bukkit.OfflinePlayer op = Bukkit.getOfflinePlayer(name);
             if (op == null) return null;
 
-            // Guard against fabricated offline players
             if (!op.hasPlayedBefore() && !op.isOnline()) return null;
 
             return op.getUniqueId();
