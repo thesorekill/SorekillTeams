@@ -55,6 +55,161 @@ public final class MenuRouter {
         cycler.stopCycling(viewerId);
     }
 
+    // =========================================================
+    // ✅ Menu state helpers (refresh/close)
+    // =========================================================
+
+    /**
+     * Re-open the menu the player currently has open (preserves page + ctx).
+     */
+    public void refreshOpenMenu(Player p) {
+        if (p == null || !p.isOnline()) return;
+
+        Inventory top = (p.getOpenInventory() != null) ? p.getOpenInventory().getTopInventory() : null;
+        if (top == null) return;
+
+        if (!(top.getHolder() instanceof MenuHolder holder)) return;
+
+        String menuKey = holder.menuKey();
+        int page = holder.page();
+
+        Map<String, String> ctx = null;
+        String teamId = holder.ctxGet("team_id");
+        if (teamId != null && !teamId.isBlank()) {
+            ctx = new HashMap<>();
+            ctx.put("team_id", teamId);
+        }
+
+        open(p, menuKey, page, ctx);
+    }
+
+    public boolean isViewingMenu(Player p, String menuKey) {
+        if (p == null || !p.isOnline() || menuKey == null) return false;
+        Inventory top = (p.getOpenInventory() != null) ? p.getOpenInventory().getTopInventory() : null;
+        if (top == null) return false;
+        if (!(top.getHolder() instanceof MenuHolder holder)) return false;
+        return menuKey.equalsIgnoreCase(holder.menuKey());
+    }
+
+    public String openMenuKey(Player p) {
+        if (p == null || !p.isOnline()) return null;
+        Inventory top = (p.getOpenInventory() != null) ? p.getOpenInventory().getTopInventory() : null;
+        if (top == null) return null;
+        if (!(top.getHolder() instanceof MenuHolder holder)) return null;
+        return holder.menuKey();
+    }
+
+    public UUID openTeamId(Player p) {
+        if (p == null || !p.isOnline()) return null;
+        Inventory top = (p.getOpenInventory() != null) ? p.getOpenInventory().getTopInventory() : null;
+        if (top == null) return null;
+        if (!(top.getHolder() instanceof MenuHolder holder)) return null;
+
+        String id = holder.ctxGet("team_id");
+        return MenuIds.safeUuid(id);
+    }
+
+    public void closeIfViewing(Player p, String... menuKeys) {
+        if (p == null || !p.isOnline() || menuKeys == null || menuKeys.length == 0) return;
+
+        Inventory top = (p.getOpenInventory() != null) ? p.getOpenInventory().getTopInventory() : null;
+        if (top == null) return;
+
+        if (!(top.getHolder() instanceof MenuHolder holder)) return;
+
+        String openKey = holder.menuKey();
+        if (openKey == null) return;
+
+        for (String k : menuKeys) {
+            if (k != null && !k.isBlank() && openKey.equalsIgnoreCase(k)) {
+                p.closeInventory();
+                return;
+            }
+        }
+    }
+
+    /**
+     * Close team menus ONLY if they are displaying the given teamId.
+     */
+    public void closeIfViewingTeam(Player p, UUID teamId, String... menuKeys) {
+        if (p == null || !p.isOnline() || teamId == null || menuKeys == null || menuKeys.length == 0) return;
+
+        Inventory top = (p.getOpenInventory() != null) ? p.getOpenInventory().getTopInventory() : null;
+        if (top == null) return;
+
+        if (!(top.getHolder() instanceof MenuHolder holder)) return;
+
+        String openKey = holder.menuKey();
+        if (openKey == null) return;
+
+        boolean matchesMenu = false;
+        for (String k : menuKeys) {
+            if (k != null && !k.isBlank() && openKey.equalsIgnoreCase(k)) {
+                matchesMenu = true;
+                break;
+            }
+        }
+        if (!matchesMenu) return;
+
+        UUID openTeam = MenuIds.safeUuid(holder.ctxGet("team_id"));
+        if (openTeam != null && openTeam.equals(teamId)) {
+            p.closeInventory();
+        }
+    }
+
+    /**
+     * Refresh team menus for local players who are currently viewing the affected team.
+     */
+    public void refreshIfViewingTeam(Player p, UUID teamId, String... menuKeys) {
+        if (p == null || !p.isOnline() || teamId == null || menuKeys == null || menuKeys.length == 0) return;
+
+        Inventory top = (p.getOpenInventory() != null) ? p.getOpenInventory().getTopInventory() : null;
+        if (top == null) return;
+
+        if (!(top.getHolder() instanceof MenuHolder holder)) return;
+
+        String openKey = holder.menuKey();
+        if (openKey == null) return;
+
+        boolean matchesMenu = false;
+        for (String k : menuKeys) {
+            if (k != null && !k.isBlank() && openKey.equalsIgnoreCase(k)) {
+                matchesMenu = true;
+                break;
+            }
+        }
+        if (!matchesMenu) return;
+
+        UUID openTeam = MenuIds.safeUuid(holder.ctxGet("team_id"));
+        if (openTeam != null && openTeam.equals(teamId)) {
+            refreshOpenMenu(p);
+        }
+    }
+
+    /**
+     * Convenience: refresh team_info + team_members for everyone viewing that team.
+     */
+    public void refreshTeamMenusForLocalViewers(UUID teamId) {
+        if (teamId == null) return;
+        for (Player p : Bukkit.getOnlinePlayers()) {
+            if (p == null || !p.isOnline()) continue;
+            refreshIfViewingTeam(p, teamId, "team_info", "team_members");
+        }
+    }
+
+    /**
+     * Convenience: close team_info + team_members for everyone viewing that team.
+     */
+    public void closeTeamMenusForLocalViewers(UUID teamId) {
+        if (teamId == null) return;
+        for (Player p : Bukkit.getOnlinePlayers()) {
+            if (p == null || !p.isOnline()) continue;
+            closeIfViewingTeam(p, teamId, "team_info", "team_members");
+        }
+    }
+
+    // =========================================================
+
     private void open(Player p, String menuKey, int page, Map<String, String> ctx) {
         if (plugin == null || p == null) return;
         if (plugin.menus() == null) return;
@@ -66,9 +221,24 @@ public final class MenuRouter {
         if (menu == null) return;
 
         plugin.ensureTeamsSnapshotFreshFromSql();
-        plugin.ensureTeamFreshFromSql(p); // optional but good
+        plugin.ensureTeamFreshFromSql(p);
+
         Team viewerTeam = plugin.teams().getTeamByPlayer(p.getUniqueId()).orElse(null);
-        Team placeholderTeamForTitle = resolvePlaceholderTeamForMenu(menuKey, viewerTeam, ctx);
+
+        // ✅ Make sure ctx carries team_id for team menus even when opened without payload
+        Map<String, String> ctxFinal = ctx;
+        if (ctxFinal == null) ctxFinal = new HashMap<>();
+
+        boolean isTeamMenu = menuKey != null && (
+                "team_info".equalsIgnoreCase(menuKey) ||
+                        "team_members".equalsIgnoreCase(menuKey)
+        );
+
+        if (isTeamMenu && viewerTeam != null && viewerTeam.getId() != null) {
+            ctxFinal.putIfAbsent("team_id", viewerTeam.getId().toString());
+        }
+
+        Team placeholderTeamForTitle = resolvePlaceholderTeamForMenu(menuKey, viewerTeam, ctxFinal);
 
         String rawTitle = plugin.menus().str(menu, "title", "&8ᴛᴇᴀᴍꜱ");
         String title = text.apply(p, placeholderTeamForTitle, rawTitle);
@@ -79,8 +249,8 @@ public final class MenuRouter {
         MenuHolder holder = new MenuHolder(menuKey, p);
         holder.setPage(Math.max(0, page));
 
-        if (ctx != null) {
-            for (Map.Entry<String, String> e : ctx.entrySet()) holder.ctxPut(e.getKey(), e.getValue());
+        if (ctxFinal != null) {
+            for (Map.Entry<String, String> e : ctxFinal.entrySet()) holder.ctxPut(e.getKey(), e.getValue());
         }
 
         Inventory inv = Bukkit.createInventory(holder, size, title);
@@ -112,6 +282,16 @@ public final class MenuRouter {
 
                     cycler.startMemberHeadCycling(p, holder, slot, mh);
                 }
+
+                // ✅ FIX: homes can be set on other backends; refresh homes snapshot before rendering bed.
+                // This ensures the menu always shows the current SQL state (no stale cache).
+                try {
+                    if (plugin.teamHomes() != null) {
+                        // This method exists in your plugin already (used at startup).
+                        // It should load from the active home storage (SQL/YAML) safely.
+                        plugin.loadHomesBestEffort("menu_open");
+                    }
+                } catch (Throwable ignored) {}
 
                 lists.renderTeamHomeBed(inv, holder, size, p, viewerTeam, items);
 
@@ -269,7 +449,7 @@ public final class MenuRouter {
             int max = Math.max(1, plugin.getConfig().getInt("homes.max_homes", 1));
             if (max <= 1) {
                 p.performCommand("team sethome team");
-                plugin.getServer().getScheduler().runTask(plugin, () -> open(p, "team_info", 0, null));
+                plugin.getServer().getScheduler().runTask(plugin, () -> refreshOpenMenu(p));
             } else {
                 p.performCommand("team sethome");
             }

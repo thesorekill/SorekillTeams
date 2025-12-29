@@ -14,18 +14,24 @@ import net.chumbucket.sorekillteams.SorekillTeamsPlugin;
 import net.chumbucket.sorekillteams.model.Team;
 import net.chumbucket.sorekillteams.model.TeamHome;
 import net.chumbucket.sorekillteams.model.TeamInvite;
+import net.chumbucket.sorekillteams.network.RedisPresenceBus;
 import org.bukkit.Bukkit;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
 import org.bukkit.entity.Player;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.*;
 import java.util.stream.Collectors;
 
 public final class TeamCommandTabCompleter implements TabCompleter {
 
     private final SorekillTeamsPlugin plugin;
+
+    // cached reflective access to presence bus (so we don't pay reflection cost per keystroke)
+    private volatile RedisPresenceBus presenceBusCached;
 
     public TeamCommandTabCompleter(SorekillTeamsPlugin plugin) {
         this.plugin = plugin;
@@ -70,17 +76,17 @@ public final class TeamCommandTabCompleter implements TabCompleter {
         // -------------------------
         if (args.length == 2 && sub.equals("invite")) {
             if (!p.hasPermission("sorekillteams.invite")) return List.of();
-            return partial(args[1], onlinePlayerNamesExcluding(p.getName()));
+            return partial(args[1], onlinePlayerNamesNetworkExcluding(p.getName()));
         }
 
         if (args.length == 2 && sub.equals("kick")) {
             if (!p.hasPermission("sorekillteams.kick")) return List.of();
-            return partial(args[1], onlinePlayerNamesExcluding(p.getName()));
+            return partial(args[1], onlinePlayerNamesNetworkExcluding(p.getName()));
         }
 
         if (args.length == 2 && sub.equals("transfer")) {
             if (!p.hasPermission("sorekillteams.transfer")) return List.of();
-            return partial(args[1], onlinePlayerNamesExcluding(p.getName()));
+            return partial(args[1], onlinePlayerNamesNetworkExcluding(p.getName()));
         }
 
         // -------------------------
@@ -204,14 +210,95 @@ public final class TeamCommandTabCompleter implements TabCompleter {
         }
     }
 
-    private List<String> onlinePlayerNamesExcluding(String name) {
-        return Bukkit.getOnlinePlayers().stream()
-                .map(Player::getName)
-                .filter(n -> n != null && !n.isBlank())
-                .filter(n -> name == null || !n.equalsIgnoreCase(name))
+    /**
+     * ✅ FIX: network-wide online names when presence is enabled.
+     *
+     * - Local Bukkit online players (this backend)
+     * - + RedisPresenceBus cached online names (other backends)
+     *
+     * IMPORTANT: must stay non-blocking (tab completion runs sync).
+     */
+    private List<String> onlinePlayerNamesNetworkExcluding(String excludeName) {
+        Set<String> out = new HashSet<>();
+
+        // local backend
+        for (Player pl : Bukkit.getOnlinePlayers()) {
+            if (pl == null) continue;
+            String n = pl.getName();
+            if (n == null || n.isBlank()) continue;
+            if (excludeName != null && n.equalsIgnoreCase(excludeName)) continue;
+            out.add(n);
+        }
+
+        // network presence (cached)
+        try {
+            // use your plugin toggle (you already call this elsewhere)
+            if (plugin.isPresenceNetworkEnabled()) {
+                RedisPresenceBus bus = resolvePresenceBus();
+                if (bus != null && bus.isRunning()) {
+                    for (String n : bus.cachedOnlineNames()) {
+                        if (n == null || n.isBlank()) continue;
+                        if (excludeName != null && n.equalsIgnoreCase(excludeName)) continue;
+                        out.add(n);
+                    }
+                }
+            }
+        } catch (Throwable ignored) {}
+
+        return out.stream()
                 .distinct()
                 .sorted(String.CASE_INSENSITIVE_ORDER)
                 .collect(Collectors.toList());
+    }
+
+    /**
+     * Best-effort: find the RedisPresenceBus instance without requiring a specific accessor name.
+     * This avoids breaking if your plugin exposes it differently.
+     */
+    private RedisPresenceBus resolvePresenceBus() {
+        RedisPresenceBus cached = presenceBusCached;
+        if (cached != null) return cached;
+
+        // 1) Try obvious getter names
+        RedisPresenceBus found = tryCallBusGetter("presenceBus");
+        if (found == null) found = tryCallBusGetter("getPresenceBus");
+        if (found == null) found = tryCallBusGetter("redisPresenceBus");
+        if (found == null) found = tryCallBusGetter("getRedisPresenceBus");
+
+        // 2) Try field scan (private field)
+        if (found == null) {
+            found = tryFindBusField();
+        }
+
+        if (found != null) presenceBusCached = found;
+        return found;
+    }
+
+    private RedisPresenceBus tryCallBusGetter(String methodName) {
+        try {
+            Method m = plugin.getClass().getMethod(methodName);
+            Object o = m.invoke(plugin);
+            return (o instanceof RedisPresenceBus b) ? b : null;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private RedisPresenceBus tryFindBusField() {
+        try {
+            Class<?> c = plugin.getClass();
+            while (c != null && c != Object.class) {
+                for (Field f : c.getDeclaredFields()) {
+                    if (f == null) continue;
+                    if (!RedisPresenceBus.class.isAssignableFrom(f.getType())) continue;
+                    f.setAccessible(true);
+                    Object o = f.get(plugin);
+                    if (o instanceof RedisPresenceBus b) return b;
+                }
+                c = c.getSuperclass();
+            }
+        } catch (Throwable ignored) {}
+        return null;
     }
 
     private List<String> inviteTeamNames(UUID invitee) {
@@ -301,7 +388,6 @@ public final class TeamCommandTabCompleter implements TabCompleter {
         if (options == null || options.isEmpty()) return List.of();
 
         // ✅ Fix: when completing multi-word args, only match against the last token typed
-        // Example: "/team spy My T" should match teams starting with "t", not "my t"
         final String lastToken = lastToken(token);
         final String t = (lastToken == null ? "" : lastToken.toLowerCase(Locale.ROOT));
 

@@ -121,7 +121,10 @@ public final class TeamHomeCommands implements TeamSubcommandModule {
             if (plugin.teamHomeStorage() != null && plugin.teamHomes() != null) {
                 plugin.teamHomeStorage().saveAll(plugin.teamHomes());
             }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            plugin.getLogger().warning("Failed to save team homes: " +
+                    e.getClass().getSimpleName() + ": " + e.getMessage());
+        }
 
         plugin.msg().send(p, "team_home_set", "{home}", raw);
 
@@ -171,7 +174,10 @@ public final class TeamHomeCommands implements TeamSubcommandModule {
             if (plugin.teamHomeStorage() != null && plugin.teamHomes() != null) {
                 plugin.teamHomeStorage().saveAll(plugin.teamHomes());
             }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            plugin.getLogger().warning("Failed to save team homes: " +
+                    e.getClass().getSimpleName() + ": " + e.getMessage());
+        }
 
         plugin.msg().send(p, "team_home_deleted", "{home}", raw);
 

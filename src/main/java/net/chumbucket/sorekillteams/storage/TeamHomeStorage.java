@@ -12,6 +12,8 @@ package net.chumbucket.sorekillteams.storage;
 
 import net.chumbucket.sorekillteams.service.TeamHomeService;
 
+import java.util.UUID;
+
 /**
  * Persistence contract for {@link TeamHomeService}.
  */
@@ -21,4 +23,11 @@ public interface TeamHomeStorage {
 
     void saveAll(TeamHomeService homes) throws Exception;
 
+    /**
+     * ✅ Remove all homes for a team from storage (used on disband).
+     * Default no-op so YAML/other backends don’t break.
+     */
+    default void deleteTeam(UUID teamId) throws Exception {
+        // no-op by default
+    }
 }

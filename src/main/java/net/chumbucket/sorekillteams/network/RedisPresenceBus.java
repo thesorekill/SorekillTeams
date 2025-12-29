@@ -15,24 +15,30 @@ import org.bukkit.Bukkit;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.entity.Player;
 
-import java.util.Objects;
-import java.util.UUID;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import redis.clients.jedis.DefaultJedisClientConfig;
 import redis.clients.jedis.HostAndPort;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPubSub;
+import redis.clients.jedis.params.ScanParams;
+import redis.clients.jedis.resps.ScanResult;
 
 public final class RedisPresenceBus {
 
     private static final String ONLINE_KEY_PREFIX = "online:";
 
+    // server + name are stored in the redis value.
+    // using a rarely-used ASCII unit separator so names like "a|b" won't break parsing
+    private static final char SEP = 0x1F;
+
     private final SorekillTeamsPlugin plugin;
     private final String originServer;
 
     private final String channel;
-    private final String keyPrefix; // includes channel_prefix so clusters don't collide
+    private final String keyPrefix; // e.g. sorekillteams:online:<uuid>
 
     private final String host;
     private final int port;
@@ -46,6 +52,10 @@ public final class RedisPresenceBus {
     private JedisPubSub pubSub;
 
     private int heartbeatTaskId = -1;
+    private int snapshotTaskId = -1;
+
+    // ✅ Cached view for tab completion and other fast lookups
+    private final Map<UUID, String> cachedNamesByUuid = new ConcurrentHashMap<>();
 
     public RedisPresenceBus(SorekillTeamsPlugin plugin, ConfigurationSection sec, String originServer) {
         this.plugin = Objects.requireNonNull(plugin, "plugin");
@@ -82,6 +92,10 @@ public final class RedisPresenceBus {
                 // ignore self-origin
                 if (originServer.equalsIgnoreCase(pkt.originServer())) return;
 
+                // ✅ update our local cache immediately (tab completion needs this)
+                applyPacketToCache(pkt);
+
+                // keep your existing hook for other behaviors
                 Bukkit.getScheduler().runTask(plugin, () -> plugin.onRemotePresence(pkt));
             }
         };
@@ -100,6 +114,7 @@ public final class RedisPresenceBus {
         subThread.start();
 
         startHeartbeatTask();
+        startSnapshotTask(); // ✅ so new backends learn current online users
 
         plugin.getLogger().info("PresenceBus=Redis subscribed to '" + channel + "' as server='" + originServer + "'");
     }
@@ -112,15 +127,34 @@ public final class RedisPresenceBus {
             heartbeatTaskId = -1;
         }
 
+        if (snapshotTaskId >= 0) {
+            try { Bukkit.getScheduler().cancelTask(snapshotTaskId); } catch (Exception ignored) {}
+            snapshotTaskId = -1;
+        }
+
         try { if (pubSub != null) pubSub.unsubscribe(); } catch (Exception ignored) {}
         if (subThread != null) {
             try { subThread.interrupt(); } catch (Exception ignored) {}
             subThread = null;
         }
         pubSub = null;
+
+        cachedNamesByUuid.clear();
     }
 
     public boolean isRunning() { return running.get(); }
+
+    /**
+     * Cached network online names for fast sync usage (tab completion).
+     */
+    public Collection<String> cachedOnlineNames() {
+        // snapshot stable iteration
+        Set<String> out = new HashSet<>();
+        for (String n : cachedNamesByUuid.values()) {
+            if (n != null && !n.isBlank()) out.add(n);
+        }
+        return out;
+    }
 
     /**
      * Mark a player online:
@@ -133,6 +167,11 @@ public final class RedisPresenceBus {
         UUID u = p.getUniqueId();
         if (u == null) return;
 
+        final String playerName = safe(p.getName());
+
+        // update local cache immediately
+        if (!playerName.isBlank()) cachedNamesByUuid.put(u, playerName);
+
         int ttlSeconds = Math.max(10, plugin.getConfig().getInt("redis.presence_ttl_seconds", 25));
 
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
@@ -142,7 +181,7 @@ public final class RedisPresenceBus {
                 boolean alreadyOnline = jedis.exists(key);
 
                 // Always refresh/take ownership so future OFFLINE ownership checks are correct
-                jedis.setex(key, ttlSeconds, originServer);
+                jedis.setex(key, ttlSeconds, encodeValue(originServer, playerName));
 
                 // ✅ Edge-trigger: only publish ONLINE if key did not exist
                 if (!alreadyOnline) {
@@ -150,7 +189,7 @@ public final class RedisPresenceBus {
                             originServer,
                             PresencePacket.Type.ONLINE,
                             u,
-                            safe(p.getName()),
+                            playerName,
                             originServer,
                             System.currentTimeMillis()
                     ).encode());
@@ -184,14 +223,21 @@ public final class RedisPresenceBus {
     private void markOfflineAfterDelay(UUID uuid, String nameHint) {
         if (!running.get() || uuid == null) return;
 
+        // optimistic cache removal (will be re-added if another backend owns it)
+        cachedNamesByUuid.remove(uuid);
+
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
             try (Jedis jedis = newJedis()) {
                 String key = keyPrefix + uuid;
 
                 // If another backend already claimed this player, do NOT publish offline.
-                String current = jedis.get(key);
-                if (current != null && !current.isBlank() && !current.equalsIgnoreCase(originServer)) {
-                    return; // switched servers, keep them online
+                String currentRaw = jedis.get(key);
+                String currentServer = parseServer(currentRaw);
+                if (currentServer != null && !currentServer.isBlank() && !currentServer.equalsIgnoreCase(originServer)) {
+                    // another backend owns this session -> keep them online
+                    String currentName = parseName(currentRaw);
+                    if (currentName != null && !currentName.isBlank()) cachedNamesByUuid.put(uuid, currentName);
+                    return;
                 }
 
                 jedis.del(key);
@@ -223,7 +269,7 @@ public final class RedisPresenceBus {
     public String serverFor(UUID uuid) {
         if (!running.get() || uuid == null) return null;
         try (Jedis jedis = newJedis()) {
-            return jedis.get(keyPrefix + uuid);
+            return parseServer(jedis.get(keyPrefix + uuid));
         } catch (Throwable t) {
             return null;
         }
@@ -245,16 +291,117 @@ public final class RedisPresenceBus {
                     UUID u = p.getUniqueId();
                     if (u == null) continue;
 
+                    String name = safe(p.getName());
+                    if (!name.isBlank()) cachedNamesByUuid.put(u, name);
+
                     // refresh and keep ownership updated
-                    jedis.setex(keyPrefix + u, ttlSeconds, originServer);
+                    jedis.setex(keyPrefix + u, ttlSeconds, encodeValue(originServer, name));
                 }
             } catch (Throwable ignored) {}
 
         }, periodTicks, periodTicks).getTaskId();
     }
 
+    /**
+     * ✅ Periodically SCAN redis for online keys and hydrate the cache.
+     *
+     * This solves the “backend started later” problem:
+     * - markOnline is edge-triggered (won't republish every heartbeat)
+     * - without snapshots, a new backend wouldn't learn existing online names
+     */
+    private void startSnapshotTask() {
+        if (!running.get()) return;
+
+        long periodTicks = Math.max(60L, plugin.getConfig().getLong("redis.presence_snapshot_refresh_ticks", 200L));
+
+        snapshotTaskId = Bukkit.getScheduler().runTaskTimerAsynchronously(plugin, () -> {
+            if (!running.get()) return;
+
+            Map<UUID, String> snap = new HashMap<>();
+
+            try (Jedis jedis = newJedis()) {
+                String cursor = "0";
+                ScanParams params = new ScanParams()
+                        .match(keyPrefix + "*")
+                        .count(200);
+
+                // safety cap so huge redis doesn't stall
+                int loops = 0;
+
+                do {
+                    ScanResult<String> res = jedis.scan(cursor, params);
+                    cursor = res.getCursor();
+
+                    for (String key : res.getResult()) {
+                        if (key == null) continue;
+
+                        // key format: <keyPrefix><uuid>
+                        String idPart = key.substring(keyPrefix.length());
+                        UUID uuid = safeUuid(idPart);
+                        if (uuid == null) continue;
+
+                        String raw = jedis.get(key);
+                        String name = parseName(raw);
+                        if (name != null && !name.isBlank()) {
+                            snap.put(uuid, name);
+                        }
+                    }
+
+                    loops++;
+                    if (loops >= 10) break; // cap work per run
+                } while (!"0".equals(cursor));
+            } catch (Throwable ignored) {}
+
+            if (!snap.isEmpty()) {
+                // merge snap into cache, but also drop stale entries not present in snap
+                cachedNamesByUuid.keySet().retainAll(snap.keySet());
+                cachedNamesByUuid.putAll(snap);
+            } else {
+                // If redis unreachable, don't nuke cache; just keep what we have.
+            }
+
+        }, periodTicks, periodTicks).getTaskId();
+    }
+
+    private void applyPacketToCache(PresencePacket pkt) {
+        if (pkt == null || pkt.playerUuid() == null) return;
+
+        if (pkt.type() == PresencePacket.Type.ONLINE) {
+            String n = safe(pkt.playerName());
+            if (!n.isBlank()) cachedNamesByUuid.put(pkt.playerUuid(), n);
+        } else if (pkt.type() == PresencePacket.Type.OFFLINE) {
+            cachedNamesByUuid.remove(pkt.playerUuid());
+        }
+    }
+
+    private static UUID safeUuid(String s) {
+        if (s == null || s.isBlank()) return null;
+        try { return UUID.fromString(s.trim()); } catch (Exception e) { return null; }
+    }
+
     private static String safe(String s) {
         return (s == null ? "" : s);
+    }
+
+    private static String encodeValue(String server, String name) {
+        String s = (server == null ? "" : server);
+        String n = (name == null ? "" : name);
+        return s + SEP + n;
+    }
+
+    private static String parseServer(String raw) {
+        if (raw == null) return null;
+        int idx = raw.indexOf(SEP);
+        if (idx < 0) return raw; // backward compat (old value was server only)
+        return raw.substring(0, idx);
+    }
+
+    private static String parseName(String raw) {
+        if (raw == null) return null;
+        int idx = raw.indexOf(SEP);
+        if (idx < 0) return ""; // old format had no name
+        if (idx + 1 >= raw.length()) return "";
+        return raw.substring(idx + 1);
     }
 
     private Jedis newJedis() {

@@ -13,6 +13,7 @@ package net.chumbucket.sorekillteams;
 import net.byteflux.libby.BukkitLibraryManager;
 import net.byteflux.libby.Library;
 import net.chumbucket.sorekillteams.command.AdminCommand;
+import net.chumbucket.sorekillteams.command.AdminCommandTabCompleter;
 import net.chumbucket.sorekillteams.command.TeamChatCommand;
 import net.chumbucket.sorekillteams.command.TeamCommand;
 import net.chumbucket.sorekillteams.command.TeamCommandTabCompleter;
@@ -132,13 +133,6 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
     // =========================================================
     // ✅ Presence de-dupe (stop spam / only proxy join+leave should message)
-    //
-    // IMPORTANT:
-    // - We now rely on RedisPresenceBus being "edge-triggered" for ONLINE:
-    //   it only publishes ONLINE when key didn't exist.
-    // - We still keep local dedupe in case of race/reconnect/replay.
-    //
-    // This dedupe ONLY affects MESSAGE BROADCASTING (not Redis key ownership).
     // =========================================================
     private final ConcurrentHashMap<UUID, PresenceState> presenceState = new ConcurrentHashMap<>();
 
@@ -169,6 +163,9 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
         ensurePlaceholdersHooked();
 
+        // -------------------------
+        // Storage boot
+        // -------------------------
         try {
             wireStorageFromConfig(true);
         } catch (Exception e) {
@@ -191,15 +188,41 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
         loadHomesBestEffort("startup");
 
-        // ✅ network wiring (Redis buses)
-        setupRedisNetwork();
+        // -------------------------
+        // ✅ Network wiring (Redis buses)
+        // -------------------------
+        try {
+            setupRedisNetwork();
+        } catch (Throwable t) {
+            // Don’t hard-disable the plugin if redis fails; just log and run local-only.
+            getLogger().warning("Redis network failed to start. Running in local-only mode.");
+            getLogger().warning("Reason: " + t.getClass().getSimpleName() + ": " + t.getMessage());
+        }
 
-        registerCommand("sorekillteams", new AdminCommand(this));
+        // -------------------------
+        // ✅ Commands + tab completion
+        // -------------------------
+        // IMPORTANT:
+        // - The alias "st" inherits tab completion from "sorekillteams" automatically.
+        // - Do NOT try getCommand("st") (Spigot returns the main command, not the alias).
         registerCommand("team", new TeamCommand(this));
         registerCommand("tc", new TeamChatCommand(this));
+        registerCommand("sorekillteams", new AdminCommand(this));
 
         registerTabCompleter("team", new TeamCommandTabCompleter(this));
+        registerTabCompleter("sorekillteams", new AdminCommandTabCompleter(this));
 
+        // Extra safety + useful logs
+        PluginCommand adminCmd = getCommand("sorekillteams");
+        if (adminCmd == null) {
+            getLogger().warning("Command 'sorekillteams' not found. Check plugin.yml: commands: sorekillteams");
+        } else {
+            getLogger().info("Registered /sorekillteams executor + tab completer (aliases inherit).");
+        }
+
+        // -------------------------
+        // Listeners
+        // -------------------------
         getServer().getPluginManager().registerEvents(new FriendlyFireListener(this), this);
         getServer().getPluginManager().registerEvents(new TeamChatListener(this), this);
         getServer().getPluginManager().registerEvents(new TeamOnlineStatusListener(this), this);
@@ -207,10 +230,16 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         getServer().getPluginManager().registerEvents(new MainMenuListener(this), this);
         getServer().getPluginManager().registerEvents(new CreateTeamFlowListener(this), this);
 
+        // -------------------------
+        // Tasks
+        // -------------------------
         startInvitePurgeTask();
         startAutosaveTask();
         startSqlAutoRefreshTask();
 
+        // -------------------------
+        // Misc
+        // -------------------------
         syncUpdateCheckerWithConfig();
 
         getLogger().info("SorekillTeams enabled. Storage=" + storageTypeActive +
@@ -293,8 +322,13 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         startAutosaveTask();
         startSqlAutoRefreshTask();
 
-        // ✅ restart/refresh network wiring too
-        setupRedisNetwork();
+        // ✅ restart/refresh network wiring too (safely)
+        try {
+            setupRedisNetwork();
+        } catch (Throwable t) {
+            getLogger().warning("Reload: Redis network failed to start. Running in local-only mode.");
+            getLogger().warning("Reason: " + t.getClass().getSimpleName() + ": " + t.getMessage());
+        }
 
         syncUpdateCheckerWithConfig();
 
@@ -334,13 +368,7 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         this.networkServerName = (serverId == null || serverId.isBlank()) ? "default" : serverId.trim();
 
         // ✅ MUST load jedis runtime libs BEFORE any Redis classes run
-        try {
-            loadRedisLibsIfNeeded(sec);
-        } catch (Exception e) {
-            getLogger().warning("Redis enabled but failed to load Redis libraries: " +
-                    e.getClass().getSimpleName() + ": " + e.getMessage());
-            return;
-        }
+        loadRedisLibsIfNeeded(sec);
 
         try {
             this.teamChatBus = new RedisTeamChatBus(this, sec, networkServerName);
@@ -449,7 +477,6 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     public void markPresenceOnline(Player p) {
         RedisPresenceBus pb = this.presenceBus;
         if (pb == null || !pb.isRunning() || p == null) return;
-        // RedisPresenceBus should be edge-triggered for ONLINE
         pb.markOnline(p);
     }
 
@@ -507,6 +534,11 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
                             "{team}", Msg.color(safe(pkt.teamName(), "Team"))
                     );
                 }
+
+                UUID tid = pkt.teamId();
+                if (tid != null && menuRouter != null) {
+                    Bukkit.getScheduler().runTask(this, () -> menuRouter.refreshTeamMenusForLocalViewers(tid));
+                }
             }
             case DENIED -> { }
             case EXPIRED -> { }
@@ -518,8 +550,7 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     // ✅ Remote TeamEvent de-dupe (prevents double-processing)
     // =========================================================
     private final ConcurrentHashMap<String, Long> recentTeamEvents = new ConcurrentHashMap<>();
-
-    private final java.util.concurrent.ConcurrentHashMap<UUID, Long> recentKickNotifies = new java.util.concurrent.ConcurrentHashMap<>();
+    private final ConcurrentHashMap<UUID, Long> recentKickNotifies = new ConcurrentHashMap<>();
 
     private long teamEventDedupeWindowMs() {
         return Math.max(250L, getConfig().getLong("redis.team_events.dedupe_window_ms", 4000L));
@@ -531,15 +562,11 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         long now = System.currentTimeMillis();
         long window = teamEventDedupeWindowMs();
 
-        // IMPORTANT:
-        // - DO NOT include pkt.atMs() (duplicates can have different timestamps)
-        // - DO NOT include originServer (reconnect/resubscribe edge cases)
-        // We want to collapse "same meaning" events within the window.
         final String key =
                 pkt.type().name() + "|" +
-                pkt.teamId() + "|" +
-                String.valueOf(pkt.actorUuid()) + "|" +
-                String.valueOf(pkt.targetUuid());
+                        pkt.teamId() + "|" +
+                        String.valueOf(pkt.actorUuid()) + "|" +
+                        String.valueOf(pkt.targetUuid());
 
         Long prev = recentTeamEvents.get(key);
         if (prev != null) {
@@ -551,7 +578,6 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
         recentTeamEvents.put(key, now);
 
-        // cheap cleanup sometimes
         if ((now & 63) == 0) {
             long killBefore = now - (window * 4L);
             for (var it = recentTeamEvents.entrySet().iterator(); it.hasNext(); ) {
@@ -577,7 +603,6 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
         recentKickNotifies.put(targetUuid, now);
 
-        // occasional cleanup
         if ((now & 63) == 0) {
             long killBefore = now - (window * 4L);
             for (var it = recentKickNotifies.entrySet().iterator(); it.hasNext(); ) {
@@ -616,11 +641,6 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
                         "{player}", safe(pkt.targetName(), safe(pkt.actorName(), "unknown")),
                         "{team}", Msg.color(safe(pkt.teamName(), "Team"))
                 };
-
-                // ✅ Optional: if the joiner is on THIS backend, you can also send them a "you joined" message
-                // (only if you have such a key). Otherwise leave it to the broadcaster.
-                // Player joiner = pkt.targetUuid() != null ? Bukkit.getPlayer(pkt.targetUuid()) : null;
-                // if (joiner != null && joiner.isOnline()) { ... }
             }
             case MEMBER_LEFT -> {
                 key = "team_member_left";
@@ -628,9 +648,6 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
                         "{player}", safe(pkt.targetName(), safe(pkt.actorName(), "unknown")),
                         "{team}", Msg.color(safe(pkt.teamName(), "Team"))
                 };
-
-                // ✅ If the leaver is on THIS backend, they may already have gotten "team_left" locally.
-                // Usually no extra direct message needed here.
             }
             case MEMBER_KICKED -> {
                 key = "team_member_kicked_broadcast";
@@ -639,7 +656,6 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
                         "{team}", Msg.color(safe(pkt.teamName(), "Team"))
                 };
 
-                // Notify the kicked player (only once) if they are on THIS backend
                 if (pkt.targetUuid() != null && shouldNotifyKickedOnce(pkt.targetUuid())) {
                     Player kicked = Bukkit.getPlayer(pkt.targetUuid());
                     if (kicked != null && kicked.isOnline()) {
@@ -655,11 +671,6 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
                 pairs = new String[]{
                         "{team}", Msg.color(safe(pkt.teamName(), "Team"))
                 };
-
-                // ✅ If you want the owner to also get a direct message on THIS backend,
-                // make sure the owner isn't excluded by your broadcast call.
-                // (Your existing broadcast excludes actor/target; for disband targetUuid is null,
-                // actorUuid is owner. If you want owner to see it too, DON'T exclude actorUuid for disband.)
             }
             case TEAM_RENAMED -> {
                 key = "team_renamed_broadcast";
@@ -676,7 +687,6 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
                         "{team}", Msg.color(safe(pkt.teamName(), "Team"))
                 };
 
-                // ✅ Optional: also notify the new owner directly if they're on THIS backend
                 if (pkt.targetUuid() != null) {
                     Player newOwner = Bukkit.getPlayer(pkt.targetUuid());
                     if (newOwner != null && newOwner.isOnline()) {
@@ -691,6 +701,33 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         }
 
         broadcastToLocalOnlineMembersOfTeam(pkt.teamId(), key, pairs, pkt.actorUuid(), pkt.targetUuid());
+
+        if (menuRouter != null && pkt.teamId() != null) {
+            final UUID teamId = pkt.teamId();
+
+            Bukkit.getScheduler().runTask(this, () -> {
+                try {
+                    switch (pkt.type()) {
+                        case MEMBER_LEFT, MEMBER_JOINED, OWNER_TRANSFERRED, TEAM_RENAMED -> {
+                            menuRouter.refreshTeamMenusForLocalViewers(teamId);
+                        }
+                        case MEMBER_KICKED -> {
+                            if (pkt.targetUuid() != null) {
+                                Player kicked = Bukkit.getPlayer(pkt.targetUuid());
+                                if (kicked != null && kicked.isOnline()) {
+                                    menuRouter.closeIfViewingTeam(kicked, teamId, "team_info", "team_members");
+                                }
+                            }
+                            menuRouter.refreshTeamMenusForLocalViewers(teamId);
+                        }
+                        case TEAM_DISBANDED -> {
+                            menuRouter.closeTeamMenusForLocalViewers(teamId);
+                        }
+                        default -> { /* no-op */ }
+                    }
+                } catch (Throwable ignored) {}
+            });
+        }
 
         if (pkt.type() == TeamEventPacket.Type.TEAM_DISBANDED && teams instanceof SimpleTeamService simple) {
             try { simple.evictCachedTeam(pkt.teamId()); } catch (Throwable ignored) {}
@@ -728,7 +765,6 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
     // =========================================================
     // ✅ Presence: broadcast to teammates on THIS backend
-    // with dedupe so we only message proxy join/leave.
     // =========================================================
 
     public void onRemotePresence(PresencePacket pkt) {
@@ -751,7 +787,6 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             Bukkit.getScheduler().runTaskLater(this, () -> {
                 Team t2 = (teams == null) ? null : teams.getTeamByPlayer(pkt.playerUuid()).orElse(null);
                 if (t2 == null) return;
-                // don't re-spam if state changed while waiting
                 if (!shouldBroadcastPresence(pkt)) return;
                 broadcastPresenceToLocalTeammates(t2.getId(), pkt);
             }, 10L);
@@ -769,10 +804,8 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         long window = presenceSwapWindowMs();
 
         if (pkt.type() == PresencePacket.Type.ONLINE) {
-            // duplicate ONLINE while already online -> ignore
             if (st.online) return false;
 
-            // OFFLINE followed quickly by ONLINE => treat as backend swap, suppress
             long dt = now - st.lastOfflineMs;
             if (st.lastOfflineMs > 0 && dt >= 0 && dt <= window) {
                 st.online = true;
@@ -785,10 +818,8 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             return true;
         }
 
-        // OFFLINE
-        if (!st.online) return false; // duplicate OFFLINE
+        if (!st.online) return false;
 
-        // ONLINE followed quickly by OFFLINE => backend swap quit from old server, suppress
         long dt = now - st.lastOnlineMs;
         if (st.lastOnlineMs > 0 && dt >= 0 && dt <= window) {
             st.online = false;
@@ -856,12 +887,8 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         String msgOut = formattedMessage;
         if (debugChat) msgOut = msgOut + Msg.color(" &8[&bREMOTE&8]");
 
-        // Track recipients we already messaged to prevent duplicates (member + spy)
         java.util.HashSet<UUID> sent = new java.util.HashSet<>();
 
-        // ---------------------------------------------------------
-        // 1) Deliver to team members/owner on this backend
-        // ---------------------------------------------------------
         java.util.LinkedHashSet<UUID> targets = new java.util.LinkedHashSet<>();
         if (t.getOwner() != null) targets.add(t.getOwner());
         if (t.getMembers() != null) targets.addAll(t.getMembers());
@@ -877,10 +904,6 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             }
         }
 
-        // ---------------------------------------------------------
-        // 2) Deliver to spies on this backend
-        //    A spy is: has permission + is spying this teamId
-        // ---------------------------------------------------------
         final boolean spyEnabled = getConfig().getBoolean("chat.spy.enabled", true);
         if (!spyEnabled) return;
 
@@ -892,12 +915,11 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             UUID vu = viewer.getUniqueId();
             if (vu == null) continue;
             if (vu.equals(senderUuid)) continue;
-            if (sent.contains(vu)) continue; // already got it as a member
+            if (sent.contains(vu)) continue;
 
             if (!viewer.hasPermission(spyPerm)) continue;
 
             try {
-                // If viewer is spying this team, they should receive it
                 boolean spyingThisTeam = false;
                 Collection<Team> spied = teams.getSpiedTeams(vu);
 
@@ -916,7 +938,6 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
                 continue;
             }
 
-            // Optional prefix to make it clear why they see it
             viewer.sendMessage(Msg.color("&8[&cSPY&8] ") + msgOut);
             sent.add(vu);
         }
@@ -1162,7 +1183,7 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         return new SimpleTeamHomeService();
     }
 
-    private void loadHomesBestEffort(String phase) {
+    public void loadHomesBestEffort(String phase) {
         if (teamHomeStorage == null || teamHomes == null) return;
         try {
             teamHomeStorage.loadAll(teamHomes);
@@ -1416,7 +1437,15 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
             TeamHomeStorage hs = this.teamHomeStorage;
             TeamHomeService hv = this.teamHomes;
-            if (hs != null && hv != null) hs.saveAll(hv);
+            if (hs != null && hv != null) {
+                if (hv instanceof net.chumbucket.sorekillteams.service.SimpleTeamHomeService shs) {
+                    if (shs.isDirty()) {
+                        hs.saveAll(hv);
+                    }
+                } else {
+                    hs.saveAll(hv);
+                }
+            }
 
         } catch (Exception e) {
             getLogger().severe("Save failed (" + reason + "): " + e.getClass().getSimpleName() + ": " + e.getMessage());
@@ -1444,7 +1473,15 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
             TeamHomeStorage hs = this.teamHomeStorage;
             TeamHomeService hv = this.teamHomes;
-            if (hs != null && hv != null) hs.saveAll(hv);
+            if (hs != null && hv != null) {
+                if (hv instanceof net.chumbucket.sorekillteams.service.SimpleTeamHomeService shs) {
+                    if (shs.isDirty()) {
+                        hs.saveAll(hv);
+                    }
+                } else {
+                    hs.saveAll(hv);
+                }
+            }
 
         } catch (Exception e) {
             getLogger().severe("Save failed (" + reason + "): " + e.getClass().getSimpleName() + ": " + e.getMessage());
@@ -1502,6 +1539,8 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
     public TeamHomeService teamHomes() { return teamHomes; }
     public TeamHomeStorage teamHomeStorage() { return teamHomeStorage; }
+
+    public RedisPresenceBus presenceBus() { return presenceBus; }
 
     public boolean isFriendlyFireToggleEnabled() {
         return getConfig().getBoolean("friendly_fire.toggle_enabled", true);

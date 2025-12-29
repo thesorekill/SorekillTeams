@@ -70,6 +70,7 @@ public final class TeamCommand implements CommandExecutor {
             return true;
         }
 
+        // Best-effort SQL cache freshness
         try {
             plugin.ensureTeamFreshFromSql(p.getUniqueId());
             plugin.ensureTeamsSnapshotFreshFromSql();

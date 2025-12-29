@@ -119,7 +119,7 @@ redis:
   # Channel namespace (so multiple networks don’t collide)
   channel_prefix: "sorekillteams"
 
-  # If you run multiple backend servers, this should be unique per server.
+  # If you run multiple backend servers, this should be unique per server. (Should be same as proxy name)
   server_id: "survival-1"
 
   # Reconnect & timeouts
@@ -318,7 +318,7 @@ homes:
   # Max homes allowed per team (unless you later add permission overrides)
   max_homes: 1
 
-  # Metadata for networks / displays (stored with each home)
+  # Metadata for networks / displays (stored with each home) (Should be same as proxy name to make teleports work.)
   server_name: "survival"
 
   # Teleport warmup time (seconds)

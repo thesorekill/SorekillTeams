@@ -48,7 +48,7 @@ public final class SimpleTeamService implements TeamService {
     // spyPlayer -> set of teamIds being spied
     private final Map<UUID, Set<UUID>> spyTargets = new ConcurrentHashMap<>();
 
-    // ✅ Only write to SQL when THIS backend actually changed something
+    // ✅ Only write to storage when THIS backend actually changed something
     private final AtomicBoolean dirty = new AtomicBoolean(false);
 
     public SimpleTeamService(SorekillTeamsPlugin plugin, TeamStorage storage) {
@@ -125,21 +125,7 @@ public final class SimpleTeamService implements TeamService {
             }
         }
 
-        /*
-         * IMPORTANT:
-         * Snapshots must be SILENT.
-         *
-         * Previously we broadcasted "team disbanded" here when a team disappeared
-         * between snapshots. In SQL mode, that causes a double message because:
-         *  - the command/service broadcasts immediately, AND
-         *  - the SQL refresh removes the team and this diff broadcast fires again.
-         *
-         * Disband messaging is now strictly event-driven:
-         *  - Origin server sends local message during disbandTeam/adminDisbandTeam
-         *  - Other servers show the message when they receive Redis TEAM_DISBANDED
-         */
-        // (no broadcast on snapshot diff)
-
+        // Snapshots must be SILENT (event-driven messaging handles disband, etc.)
         teams.clear();
         teams.putAll(newTeams);
 
@@ -257,6 +243,8 @@ public final class SimpleTeamService implements TeamService {
             throw new TeamServiceException(TeamError.NOT_OWNER, "team_not_owner");
         }
 
+        UUID teamId = t.getId();
+
         broadcastToTeam(t, plugin.msg().format(
                 "team_team_disbanded",
                 "{team}", Msg.color(t.getName())
@@ -268,15 +256,26 @@ public final class SimpleTeamService implements TeamService {
         safeSave();
 
         if (isSqlMode()) {
-            try { sqlInvites().deleteAllForTeam(t.getId()); } catch (Exception ignored) {}
+            try { sqlInvites().deleteAllForTeam(teamId); } catch (Exception ignored) {}
+        }
+
+        // ✅ Local UI: close team menus on this backend for viewers of that team
+        if (plugin.menuRouter() != null) {
+            plugin.menuRouter().closeTeamMenusForLocalViewers(teamId);
+        }
+
+        if (plugin.teamHomeStorage() != null) {
+            try { plugin.teamHomeStorage().deleteTeam(teamId); } catch (Exception ignored) {}
+        }
+        if (plugin.teamHomes() != null) {
+            try { plugin.teamHomes().clearTeam(teamId); } catch (Exception ignored) {}
         }
 
         // ✅ Redis: team disbanded
-        // FIX: keep constructor arg-shape consistent with the rest of the codebase (targetUuid + targetName present)
         publishTeamEvent(new TeamEventPacket(
                 plugin.networkServerName(),
                 TeamEventPacket.Type.TEAM_DISBANDED,
-                t.getId(),
+                teamId,
                 t.getName(),
                 owner,
                 safeName(nameOf(owner)),
@@ -297,6 +296,8 @@ public final class SimpleTeamService implements TeamService {
             throw new TeamServiceException(TeamError.OWNER_CANNOT_LEAVE, "team_owner_cannot_leave");
         }
 
+        UUID teamId = t.getId();
+
         t.getMembers().remove(player);
         ensureOwnerInMembers(t);
         dedupeMembers(t);
@@ -314,11 +315,22 @@ public final class SimpleTeamService implements TeamService {
                 "{team}", Msg.color(t.getName())
         ));
 
+        // ✅ Local UI:
+        // - close leaver if they're in team menus
+        // - refresh anyone viewing this team on this backend
+        if (plugin.menuRouter() != null) {
+            Player leaver = Bukkit.getPlayer(player);
+            if (leaver != null && leaver.isOnline()) {
+                plugin.menuRouter().closeIfViewing(leaver, "team_info", "team_members");
+            }
+            plugin.menuRouter().refreshTeamMenusForLocalViewers(teamId);
+        }
+
         // ✅ Redis: member left
         publishTeamEvent(new TeamEventPacket(
                 plugin.networkServerName(),
                 TeamEventPacket.Type.MEMBER_LEFT,
-                t.getId(),
+                teamId,
                 t.getName(),
                 player,
                 safeName(nameOf(player)),
@@ -575,6 +587,11 @@ public final class SimpleTeamService implements TeamService {
                     0L
             ));
 
+            // ✅ Local UI refresh for viewers of this team
+            if (plugin.menuRouter() != null) {
+                plugin.menuRouter().refreshTeamMenusForLocalViewers(t.getId());
+            }
+
             // ✅ Redis: member joined
             publishTeamEvent(new TeamEventPacket(
                     plugin.networkServerName(),
@@ -653,6 +670,10 @@ public final class SimpleTeamService implements TeamService {
                 now,
                 0L
         ));
+
+        if (plugin.menuRouter() != null) {
+            plugin.menuRouter().refreshTeamMenusForLocalViewers(t.getId());
+        }
 
         // ✅ Redis: member joined
         publishTeamEvent(new TeamEventPacket(
@@ -815,6 +836,8 @@ public final class SimpleTeamService implements TeamService {
             throw new TeamServiceException(TeamError.TARGET_NOT_MEMBER, "team_target_not_member");
         }
 
+        UUID teamId = t.getId();
+
         t.getMembers().remove(member);
         ensureOwnerInMembers(t);
         dedupeMembers(t);
@@ -826,17 +849,34 @@ public final class SimpleTeamService implements TeamService {
         markDirty();
         safeSave();
 
+        // ✅ Local: notify kicked player directly (origin server does NOT receive its own Redis event)
+        Player kicked = Bukkit.getPlayer(member);
+        if (kicked != null && kicked.isOnline()) {
+            plugin.msg().send(kicked, "team_kick_target",
+                    "{team}", Msg.color(t.getName()),
+                    "{by}", safeName(nameOf(owner))
+            );
+            if (plugin.menuRouter() != null) {
+                plugin.menuRouter().closeIfViewing(kicked, "team_info", "team_members");
+            }
+        }
+
         broadcastToTeam(t, plugin.msg().format(
                 "team_member_kicked_broadcast",
                 "{player}", nameOf(member),
                 "{team}", Msg.color(t.getName())
         ));
 
+        // ✅ Local UI refresh for anyone viewing this team on this backend
+        if (plugin.menuRouter() != null) {
+            plugin.menuRouter().refreshTeamMenusForLocalViewers(teamId);
+        }
+
         // ✅ Redis: member kicked
         publishTeamEvent(new TeamEventPacket(
                 plugin.networkServerName(),
                 TeamEventPacket.Type.MEMBER_KICKED,
-                t.getId(),
+                teamId,
                 t.getName(),
                 owner,
                 safeName(nameOf(owner)),
@@ -866,6 +906,8 @@ public final class SimpleTeamService implements TeamService {
             throw new TeamServiceException(TeamError.TARGET_NOT_MEMBER, "team_target_not_member");
         }
 
+        UUID teamId = t.getId();
+
         t.setOwner(newOwner);
         ensureOwnerInMembers(t);
         dedupeMembers(t);
@@ -879,11 +921,15 @@ public final class SimpleTeamService implements TeamService {
                 "{team}", Msg.color(t.getName())
         ));
 
+        if (plugin.menuRouter() != null) {
+            plugin.menuRouter().refreshTeamMenusForLocalViewers(teamId);
+        }
+
         // ✅ Redis: owner transferred
         publishTeamEvent(new TeamEventPacket(
                 plugin.networkServerName(),
                 TeamEventPacket.Type.OWNER_TRANSFERRED,
-                t.getId(),
+                teamId,
                 t.getName(),
                 owner,
                 safeName(nameOf(owner)),
@@ -929,8 +975,11 @@ public final class SimpleTeamService implements TeamService {
                 "{old}", Msg.color(old)
         ));
 
-        // ✅ Redis: team renamed
-        // Convention: teamName=newName, targetName=oldName
+        if (plugin.menuRouter() != null) {
+            plugin.menuRouter().refreshTeamMenusForLocalViewers(t.getId());
+        }
+
+        // ✅ Redis: team renamed (teamName=newName, targetName=oldName)
         publishTeamEvent(new TeamEventPacket(
                 plugin.networkServerName(),
                 TeamEventPacket.Type.TEAM_RENAMED,
@@ -1003,7 +1052,7 @@ public final class SimpleTeamService implements TeamService {
                         .replace("{message}", coloredMsg)
         );
 
-        // ✅ Debug tagging (helps prove where duplicates originate)
+        // Debug tagging (helps prove where duplicates originate)
         boolean debug = plugin.getConfig().getBoolean("chat.debug", false);
         if (debug) out = out + Msg.color(" &8[&aLOCAL&8]");
 
@@ -1142,7 +1191,17 @@ public final class SimpleTeamService implements TeamService {
             try { sqlInvites().deleteAllForTeam(teamId); } catch (Exception ignored) {}
         }
 
-        // FIX: keep constructor arg-shape consistent (targetUuid + targetName present)
+        if (plugin.menuRouter() != null) {
+            plugin.menuRouter().closeTeamMenusForLocalViewers(teamId);
+        }
+
+        if (plugin.teamHomeStorage() != null) {
+            try { plugin.teamHomeStorage().deleteTeam(teamId); } catch (Exception ignored) {}
+        }
+        if (plugin.teamHomes() != null) {
+            try { plugin.teamHomes().clearTeam(teamId); } catch (Exception ignored) {}
+        }
+
         publishTeamEvent(new TeamEventPacket(
                 plugin.networkServerName(),
                 TeamEventPacket.Type.TEAM_DISBANDED,
@@ -1184,6 +1243,10 @@ public final class SimpleTeamService implements TeamService {
                 "{team}", Msg.color(t.getName())
         ));
 
+        if (plugin.menuRouter() != null) {
+            plugin.menuRouter().refreshTeamMenusForLocalViewers(teamId);
+        }
+
         publishTeamEvent(new TeamEventPacket(
                 plugin.networkServerName(),
                 TeamEventPacket.Type.OWNER_TRANSFERRED,
@@ -1204,8 +1267,10 @@ public final class SimpleTeamService implements TeamService {
         Team t = getTeamByPlayer(player).orElse(null);
         if (t == null) return;
 
+        UUID teamId = t.getId();
+
         if (player.equals(t.getOwner())) {
-            adminDisbandTeam(t.getId());
+            adminDisbandTeam(teamId);
             return;
         }
 
@@ -1220,11 +1285,26 @@ public final class SimpleTeamService implements TeamService {
         markDirty();
         safeSave();
 
+        Player kicked = Bukkit.getPlayer(player);
+        if (kicked != null && kicked.isOnline()) {
+            plugin.msg().send(kicked, "team_kick_target",
+                    "{team}", Msg.color(t.getName()),
+                    "{by}", safeName(nameOf(t.getOwner()))
+            );
+            if (plugin.menuRouter() != null) {
+                plugin.menuRouter().closeIfViewing(kicked, "team_info", "team_members");
+            }
+        }
+
         broadcastToTeam(t, plugin.msg().format(
                 "team_member_kicked_broadcast",
                 "{player}", nameOf(player),
                 "{team}", Msg.color(t.getName())
         ));
+
+        if (plugin.menuRouter() != null) {
+            plugin.menuRouter().refreshTeamMenusForLocalViewers(teamId);
+        }
 
         publishTeamEvent(new TeamEventPacket(
                 plugin.networkServerName(),
@@ -1296,7 +1376,6 @@ public final class SimpleTeamService implements TeamService {
         if (!consumeDirty()) return;
 
         try {
-            // TeamStorage expects a TeamService; this class implements TeamService
             storage.saveAll(this);
         } catch (Exception e) {
             dirty.set(true);
