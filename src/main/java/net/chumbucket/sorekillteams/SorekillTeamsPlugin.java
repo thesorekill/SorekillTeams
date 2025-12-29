@@ -633,6 +633,10 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             if (pkt.targetUuid() != null) ensureTeamFreshFromSql(pkt.targetUuid());
         } catch (Throwable ignored) {}
 
+        try {
+            applyRemoteTeamEventToLocalCache(pkt);
+        } catch (Throwable ignored) {}
+
         // ✅ NEW: homes events require homes snapshot refresh so menus render correct state
         boolean isHomeEvent =
                 pkt.type() == TeamEventPacket.Type.HOME_SET
@@ -767,6 +771,59 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         if (pkt.type() == TeamEventPacket.Type.TEAM_DISBANDED && teams instanceof SimpleTeamService simple) {
             try { simple.evictCachedTeam(pkt.teamId()); } catch (Throwable ignored) {}
         }
+    }
+
+    private void applyRemoteTeamEventToLocalCache(TeamEventPacket pkt) {
+        if (pkt == null) return;
+        if (pkt.teamId() == null) return;
+
+        if (!(teams instanceof SimpleTeamService)) return;
+
+        Team t = teams.getTeamById(pkt.teamId()).orElse(null);
+        if (t == null) return;
+
+        // We only need menu correctness: mutate the Team object in memory.
+        UUID target = pkt.targetUuid();
+
+        switch (pkt.type()) {
+            case MEMBER_JOINED -> {
+                if (target != null && !t.getMembers().contains(target)) {
+                    t.getMembers().add(target);
+                }
+            }
+            case MEMBER_LEFT, MEMBER_KICKED -> {
+                if (target != null) {
+                    t.getMembers().remove(target);
+                }
+            }
+            case OWNER_TRANSFERRED -> {
+                if (target != null) {
+                    t.setOwner(target);
+                    if (!t.getMembers().contains(target)) t.getMembers().add(target);
+                }
+            }
+            case TEAM_RENAMED -> {
+                // pkt.teamName() is the NEW name per your publisher comment
+                if (pkt.teamName() != null && !pkt.teamName().isBlank()) {
+                    t.setName(pkt.teamName());
+                }
+            }
+            default -> {
+                return;
+            }
+        }
+
+        // Ensure owner is always present + de-dupe members (MenuTeams expects clean lists)
+        UUID owner = t.getOwner();
+        if (owner != null && !t.getMembers().contains(owner)) {
+            t.getMembers().add(owner);
+        }
+
+        // de-dupe in-place, preserve order
+        java.util.LinkedHashSet<UUID> set = new java.util.LinkedHashSet<>();
+        for (UUID u : t.getMembers()) if (u != null) set.add(u);
+        t.getMembers().clear();
+        t.getMembers().addAll(set);
     }
 
     private void broadcastToLocalOnlineMembersOfTeam(UUID teamId,
