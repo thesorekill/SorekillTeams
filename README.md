@@ -128,10 +128,9 @@ Use this if you run **Velocity or BungeeCord** with multiple backend servers.
 **Steps:**
 1. Set `storage.type` to a SQL backend
 2. Enable Redis in `config.yml`
-3. Give each backend server a **unique**:
-   - `redis.server_id`
+3. Give each backend server a **unique** `redis.server_id`
 4. Set `homes.server_name` to match the **proxy server name**
-   - ⚠️ This **must exactly match** the name used by the proxy
+   - ⚠️ This must exactly match the name used by the proxy
 5. Enable `homes.proxy_mode` if using cross-server home teleports
 6. Restart all backend servers
 
@@ -153,33 +152,117 @@ Reload configs anytime with:
 
 ## Commands
 
-| Command | Usage | Description | Permission |
-|--------|-------|-------------|------------|
-| `/team` | `/team` | Base team command | `sorekillteams.use` |
-| `/team create` | `/team create <name>` | Create a team | `sorekillteams.create` |
-| `/team invite` | `/team invite <player>` | Invite a player | `sorekillteams.invite` |
-| `/team invites` | `/team invites` | View pending invites | `sorekillteams.invites` |
-| `/team accept` | `/team accept [team]` | Accept an invite | `sorekillteams.accept` |
-| `/team deny` | `/team deny [team]` | Deny an invite | `sorekillteams.deny` |
-| `/team leave` | `/team leave` | Leave your team | `sorekillteams.leave` |
-| `/team disband` | `/team disband` | Disband your team | `sorekillteams.disband` |
-| `/team info` | `/team info` | View team info | `sorekillteams.info` |
-| `/team kick` | `/team kick <player>` | Kick a member | `sorekillteams.kick` |
-| `/team transfer` | `/team transfer <player>` | Transfer ownership | `sorekillteams.transfer` |
-| `/team rename` | `/team rename <name>` | Rename your team | `sorekillteams.rename` |
-| `/team ff` | `/team ff <on|off|toggle>` | Toggle friendly fire | `sorekillteams.ff` |
-| `/tc` | `/tc [message]` | Team chat or toggle mode | `sorekillteams.teamchat` |
-| `/sorekillteams reload` | `/sorekillteams reload` | Reload configs/messages | `sorekillteams.admin.reload` |
-| `/sorekillteams version` | `/sorekillteams version` | Show plugin version | `sorekillteams.admin.version` |
+### Player Commands
+| Command | Description | Permission |
+|-------|-------------|------------|
+| `/team` | Base team command | `sorekillteams.use` |
+| `/team create <name>` | Create a team | `sorekillteams.create` |
+| `/team invite <player>` | Invite a player | `sorekillteams.invite` |
+| `/team invites` | View pending invites | `sorekillteams.invites` |
+| `/team accept [team]` | Accept an invite | `sorekillteams.accept` |
+| `/team deny [team]` | Deny an invite | `sorekillteams.deny` |
+| `/team leave` | Leave your team | `sorekillteams.leave` |
+| `/team info` | View team info | `sorekillteams.info` |
+| `/team ff <on|off|toggle>` | Toggle friendly fire | `sorekillteams.ff` |
+
+### Owner-Only Team Commands
+| Command | Description | Permission |
+|-------|-------------|------------|
+| `/team kick <player>` | Kick a member | `sorekillteams.kick` |
+| `/team transfer <player>` | Transfer ownership | `sorekillteams.transfer` |
+| `/team rename <name>` | Rename your team | `sorekillteams.rename` |
+| `/team disband` | Disband your team | `sorekillteams.disband` |
+| `/team sethome` | Set a team home | `sorekillteams.sethome` |
+| `/team delhome` | Delete a team home | `sorekillteams.delhome` |
+
+### Team Homes
+| Command | Description | Permission |
+|-------|-------------|------------|
+| `/team homes` | List team homes | `sorekillteams.homes` |
+| `/team home` | Teleport to a team home | `sorekillteams.home` |
+
+### Team Chat
+| Command | Description | Permission |
+|-------|-------------|------------|
+| `/tc [message]` | Team chat or toggle mode | `sorekillteams.teamchat` |
+
+### Admin Commands
+| Command | Description | Permission |
+|-------|-------------|------------|
+| `/sorekillteams reload` | Reload configs and storage | `sorekillteams.admin.reload` |
+| `/sorekillteams version` | Show plugin version | `sorekillteams.admin.version` |
+| `/sorekillteams disband <team>` | Force disband a team | `sorekillteams.admin.disband` |
+| `/sorekillteams setowner <team> <player>` | Force set team owner | `sorekillteams.admin.setowner` |
+| `/sorekillteams kick <team> <player>` | Force kick a member | `sorekillteams.admin.kick` |
+| `/sorekillteams info <team>` | View any team info | `sorekillteams.admin.info` |
+
+---
+
+## Permissions
+
+### Wildcard
+| Permission | Description | Default |
+|-----------|-------------|---------|
+| `sorekillteams.*` | Grants all permissions | op |
+
+### Base
+| Permission | Description | Default |
+|-----------|-------------|---------|
+| `sorekillteams.use` | Use `/team` | false |
+| `sorekillteams.teamchat` | Use team chat | false |
+| `sorekillteams.chat` | Legacy alias (maps to teamchat) | false |
+
+### Team Management
+| Permission | Description |
+|-----------|-------------|
+| `sorekillteams.create` | Create teams |
+| `sorekillteams.invite` | Invite players |
+| `sorekillteams.invites` | View pending invites |
+| `sorekillteams.accept` | Accept invites |
+| `sorekillteams.deny` | Deny invites |
+| `sorekillteams.leave` | Leave team |
+| `sorekillteams.disband` | Disband team |
+| `sorekillteams.info` | View team info |
+| `sorekillteams.kick` | Kick members |
+| `sorekillteams.transfer` | Transfer ownership |
+| `sorekillteams.rename` | Rename team |
+| `sorekillteams.ff` | Toggle friendly fire |
+
+### Team Homes
+| Permission | Description |
+|-----------|-------------|
+| `sorekillteams.homes` | List team homes |
+| `sorekillteams.home` | Teleport to team home |
+| `sorekillteams.sethome` | Set a team home |
+| `sorekillteams.delhome` | Delete a team home |
+| `sorekillteams.home.bypasscooldown` | Bypass home cooldown |
+
+### Admin / Moderation
+| Permission | Description |
+|-----------|-------------|
+| `sorekillteams.admin` | Admin command access |
+| `sorekillteams.admin.reload` | Reload plugin |
+| `sorekillteams.admin.version` | View version |
+| `sorekillteams.admin.disband` | Force disband teams |
+| `sorekillteams.admin.setowner` | Force set owner |
+| `sorekillteams.admin.kick` | Force kick players |
+| `sorekillteams.admin.info` | View any team info |
+| `sorekillteams.spy` | Spy on team chat |
+| `sorekillteams.friendlyfire.bypass` | Bypass FF protection |
+
+### Team Size Overrides
+| Permission | Description |
+|-----------|-------------|
+| `sorekillteams.max.<number>` | Override max team size (e.g. `sorekillteams.max.6`) |
 
 ---
 
 ## Planned Features
 
-- Team roles and permissions
+- Team roles and internal permissions
 - Scoreboard and nametag modules
 
-- Suggestions are appreciated!
+Suggestions are appreciated!
 
 ---
 
@@ -193,6 +276,6 @@ See `LICENSE` for details.
 ## Credits
 
 - Developed by **Sorekill**
-- Built for the **Chumbucket Network** — https://chumbucket.net
+- Built for the **Chumbucket Network** — https://www.chumbucket.net
 
 © 2025 Sorekill — Apache-2.0 License
