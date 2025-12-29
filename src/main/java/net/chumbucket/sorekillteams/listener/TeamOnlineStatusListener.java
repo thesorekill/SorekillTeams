@@ -38,6 +38,13 @@ public final class TeamOnlineStatusListener implements Listener {
         final Player p = event.getPlayer();
         if (p == null) return;
 
+        // ✅ Network-wide presence (Velocity-wide online status)
+        if (plugin.isPresenceNetworkEnabled()) {
+            plugin.markPresenceOnline(p);
+            return;
+        }
+
+        // Fallback: original local-only messages
         Team team = plugin.teams().getTeamByPlayer(p.getUniqueId()).orElse(null);
         if (team == null) return;
 
@@ -53,6 +60,13 @@ public final class TeamOnlineStatusListener implements Listener {
         final Player p = event.getPlayer();
         if (p == null) return;
 
+        // ✅ Network-wide presence (Velocity-wide online status)
+        if (plugin.isPresenceNetworkEnabled()) {
+            plugin.markPresenceOffline(p.getUniqueId(), p.getName());
+            return;
+        }
+
+        // Fallback: original local-only messages
         Team team = plugin.teams().getTeamByPlayer(p.getUniqueId()).orElse(null);
         if (team == null) return;
 
@@ -69,17 +83,15 @@ public final class TeamOnlineStatusListener implements Listener {
                                             String... pairs) {
         if (team == null || actor == null) return;
 
-        // defensive copy in case something mutates members elsewhere
         Set<UUID> members = new HashSet<>(team.getMembers());
 
         for (UUID memberId : members) {
             if (memberId == null) continue;
-            if (memberId.equals(actor)) continue; // don’t message the person who joined/quit
+            if (memberId.equals(actor)) continue;
 
             Player online = Bukkit.getPlayer(memberId);
             if (online == null || !online.isOnline()) continue;
 
-            // Msg.send handles missing/disabled keys safely
             plugin.msg().send(online, messageKey, pairs);
         }
     }

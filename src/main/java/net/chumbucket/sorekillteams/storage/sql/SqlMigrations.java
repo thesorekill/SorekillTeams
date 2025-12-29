@@ -56,6 +56,30 @@ public final class SqlMigrations {
                             "PRIMARY KEY (team_id, name)" +
                             ")"
             );
+
+            // =========================================================
+            // ✅ Invites (cross-server correctness)
+            // Source of truth when storage.type != yaml
+            // =========================================================
+            st.executeUpdate(
+                    "CREATE TABLE IF NOT EXISTS " + pfx + "invites (" +
+                            "invitee_uuid VARCHAR(36) NOT NULL," +
+                            "team_id VARCHAR(36) NOT NULL," +
+                            "inviter_uuid VARCHAR(36) NOT NULL," +
+                            "created_at_ms BIGINT NOT NULL," +
+                            "expires_at_ms BIGINT NOT NULL," +
+                            "PRIMARY KEY (invitee_uuid, team_id)" +
+                            ")"
+            );
+
+            // Optional indexes (best-effort; some dialects may not support IF NOT EXISTS)
+            try {
+                st.executeUpdate("CREATE INDEX IF NOT EXISTS " + pfx + "invites_invitee_expires_idx ON " + pfx + "invites (invitee_uuid, expires_at_ms)");
+            } catch (Exception ignored) {}
+
+            try {
+                st.executeUpdate("CREATE INDEX IF NOT EXISTS " + pfx + "invites_team_expires_idx ON " + pfx + "invites (team_id, expires_at_ms)");
+            } catch (Exception ignored) {}
         }
     }
 }

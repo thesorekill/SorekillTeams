@@ -10,6 +10,8 @@
 
 package net.chumbucket.sorekillteams;
 
+import net.byteflux.libby.BukkitLibraryManager;
+import net.byteflux.libby.Library;
 import net.chumbucket.sorekillteams.command.AdminCommand;
 import net.chumbucket.sorekillteams.command.TeamChatCommand;
 import net.chumbucket.sorekillteams.command.TeamCommand;
@@ -23,6 +25,15 @@ import net.chumbucket.sorekillteams.listener.TeamOnlineStatusListener;
 import net.chumbucket.sorekillteams.menu.MenuRouter;
 import net.chumbucket.sorekillteams.model.Team;
 import net.chumbucket.sorekillteams.model.TeamInvites;
+import net.chumbucket.sorekillteams.network.InvitePacket;
+import net.chumbucket.sorekillteams.network.PresencePacket;
+import net.chumbucket.sorekillteams.network.RedisInviteBus;
+import net.chumbucket.sorekillteams.network.RedisPresenceBus;
+import net.chumbucket.sorekillteams.network.RedisTeamChatBus;
+import net.chumbucket.sorekillteams.network.RedisTeamEventBus;
+import net.chumbucket.sorekillteams.network.TeamChatBus;
+import net.chumbucket.sorekillteams.network.TeamChatPacket;
+import net.chumbucket.sorekillteams.network.TeamEventPacket;
 import net.chumbucket.sorekillteams.placeholders.PlaceholderBridge;
 import net.chumbucket.sorekillteams.service.SimpleTeamHomeService;
 import net.chumbucket.sorekillteams.service.SimpleTeamService;
@@ -35,6 +46,7 @@ import net.chumbucket.sorekillteams.storage.YamlTeamStorage;
 import net.chumbucket.sorekillteams.storage.sql.SqlDatabase;
 import net.chumbucket.sorekillteams.storage.sql.SqlDialect;
 import net.chumbucket.sorekillteams.storage.sql.SqlTeamHomeStorage;
+import net.chumbucket.sorekillteams.storage.sql.SqlTeamInviteStorage;
 import net.chumbucket.sorekillteams.storage.sql.SqlTeamStorage;
 import net.chumbucket.sorekillteams.storage.sql.YamlToSqlMigrator;
 import net.chumbucket.sorekillteams.update.UpdateChecker;
@@ -43,7 +55,6 @@ import net.chumbucket.sorekillteams.util.Actionbar;
 import net.chumbucket.sorekillteams.util.Debug;
 import net.chumbucket.sorekillteams.util.Menus;
 import net.chumbucket.sorekillteams.util.Msg;
-
 import org.bukkit.Bukkit;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.PluginCommand;
@@ -58,9 +69,6 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
-
-import net.byteflux.libby.BukkitLibraryManager;
-import net.byteflux.libby.Library;
 
 public final class SorekillTeamsPlugin extends JavaPlugin {
 
@@ -79,7 +87,11 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     private TeamHomeStorage teamHomeStorage;
     private TeamHomeService teamHomes;
 
+    // YAML-mode invites cache (existing behavior)
     private final TeamInvites invites = new TeamInvites();
+
+    // ✅ SQL-mode invites storage
+    private SqlTeamInviteStorage sqlInvites;
 
     private UpdateChecker updateChecker;
     private UpdateNotifyListener updateNotifyListener;
@@ -87,7 +99,6 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     private int invitePurgeTaskId = -1;
     private int autosaveTaskId = -1;
 
-    // ✅ NEW: periodic SQL refresh
     private int sqlRefreshTaskId = -1;
 
     private final AtomicBoolean saveInFlight = new AtomicBoolean(false);
@@ -98,8 +109,50 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     private SqlDialect sqlDialect;
     private String storageTypeActive = "yaml";
 
-    // cache which driver we already attempted to load this session
+    // =========================================================
+    // Cross-server buses (Redis Pub/Sub)
+    // =========================================================
+    private TeamChatBus teamChatBus;
+    private RedisInviteBus inviteBus;
+
+    // ✅ Team event bus (leave/kick/disband/rename/transfer/join)
+    private RedisTeamEventBus teamEventBus;
+
+    // ✅ Presence bus (network-wide online/offline)
+    private RedisPresenceBus presenceBus;
+
+    private String networkServerName = "default";
+
     private String loadedJdbcDriverForType = null;
+
+    // =========================================================
+    // ✅ Redis runtime libs (keep jar small)
+    // =========================================================
+    private volatile boolean redisLibsLoaded = false;
+
+    // =========================================================
+    // ✅ Presence de-dupe (stop spam on backend swaps)
+    //
+    // Goal: only broadcast ONLINE when they join proxy, and OFFLINE when they leave proxy.
+    // On backend swap: you'll see OFFLINE then ONLINE close together; we suppress both.
+    //
+    // How:
+    // - Track last known "network online state" per player UUID.
+    // - Apply a "swap window" where OFFLINE quickly followed by ONLINE is treated as MOVE, not quit/join.
+    // - Also suppress duplicate ONLINE/ OFFLINE that match current state.
+    // =========================================================
+    private final ConcurrentHashMap<UUID, PresenceState> presenceState = new ConcurrentHashMap<>();
+
+    private static final class PresenceState {
+        volatile boolean online;
+        volatile long lastOnlineMs;
+        volatile long lastOfflineMs;
+    }
+
+    private long presenceSwapWindowMs() {
+        // default 4000ms works well for Velocity/Bungee server-switch bursts
+        return Math.max(1000L, getConfig().getLong("redis.presence.swap_window_ms", 4000L));
+    }
 
     @Override
     public void onEnable() {
@@ -139,6 +192,9 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
         loadHomesBestEffort("startup");
 
+        // ✅ network wiring (Redis buses)
+        setupRedisNetwork();
+
         registerCommand("sorekillteams", new AdminCommand(this));
         registerCommand("team", new TeamCommand(this));
         registerCommand("tc", new TeamChatCommand(this));
@@ -154,13 +210,14 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
         startInvitePurgeTask();
         startAutosaveTask();
-
-        // ✅ NEW: start periodic SQL refresh (does nothing in YAML mode)
         startSqlAutoRefreshTask();
 
         syncUpdateCheckerWithConfig();
 
-        getLogger().info("SorekillTeams enabled. Storage=" + storageTypeActive);
+        getLogger().info("SorekillTeams enabled. Storage=" + storageTypeActive +
+                (isRedisNetworkEnabled()
+                        ? " RedisNetwork=ON(" + networkServerName + ")"
+                        : " RedisNetwork=OFF"));
     }
 
     @Override
@@ -171,7 +228,6 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         stopTask(autosaveTaskId);
         autosaveTaskId = -1;
 
-        // ✅ NEW
         stopSqlAutoRefreshTask();
 
         trySaveNowSync("shutdown");
@@ -180,6 +236,7 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             placeholderBridge.unhookAll();
         }
 
+        stopRedisNetwork();
         stopSql();
 
         getLogger().info("SorekillTeams disabled.");
@@ -232,13 +289,17 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
         startInvitePurgeTask();
         startAutosaveTask();
-
-        // ✅ NEW: restart SQL periodic refresh after reload (handles switching yaml<->sql)
         startSqlAutoRefreshTask();
+
+        // ✅ restart/refresh network wiring too
+        setupRedisNetwork();
 
         syncUpdateCheckerWithConfig();
 
-        getLogger().info("SorekillTeams reloaded. Storage=" + storageTypeActive);
+        getLogger().info("SorekillTeams reloaded. Storage=" + storageTypeActive +
+                (isRedisNetworkEnabled()
+                        ? " RedisNetwork=ON(" + networkServerName + ")"
+                        : " RedisNetwork=OFF"));
     }
 
     private void ensurePlaceholdersHooked() {
@@ -251,12 +312,531 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         }
     }
 
+    // =========================================================
+    // ✅ Redis network wiring (chat + invites + team events + presence)
+    // =========================================================
+
+    private void setupRedisNetwork() {
+        stopRedisNetwork();
+
+        boolean enabled = getConfig().getBoolean("redis.enabled", false);
+        if (!enabled) return;
+
+        ConfigurationSection sec = getConfig().getConfigurationSection("redis");
+        if (sec == null) {
+            getLogger().warning("redis.enabled=true but missing 'redis:' section.");
+            return;
+        }
+
+        String serverId = sec.getString("server_id", "default");
+        this.networkServerName = (serverId == null || serverId.isBlank()) ? "default" : serverId.trim();
+
+        // ✅ MUST load jedis runtime libs BEFORE any Redis classes run
+        try {
+            loadRedisLibsIfNeeded(sec);
+        } catch (Exception e) {
+            getLogger().warning("Redis enabled but failed to load Redis libraries: " +
+                    e.getClass().getSimpleName() + ": " + e.getMessage());
+            return;
+        }
+
+        try {
+            this.teamChatBus = new RedisTeamChatBus(this, sec, networkServerName);
+            this.teamChatBus.start();
+        } catch (Exception e) {
+            this.teamChatBus = null;
+            getLogger().warning("Failed to start Redis team chat bus: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+        }
+
+        try {
+            this.inviteBus = new RedisInviteBus(this, sec, networkServerName);
+            this.inviteBus.start();
+        } catch (Exception e) {
+            this.inviteBus = null;
+            getLogger().warning("Failed to start Redis invite bus: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+        }
+
+        try {
+            this.teamEventBus = new RedisTeamEventBus(this, sec, networkServerName);
+            this.teamEventBus.start();
+        } catch (Exception e) {
+            this.teamEventBus = null;
+            getLogger().warning("Failed to start Redis team event bus: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+        }
+
+        try {
+            this.presenceBus = new RedisPresenceBus(this, sec, networkServerName);
+            this.presenceBus.start();
+        } catch (Exception e) {
+            this.presenceBus = null;
+            getLogger().warning("Failed to start Redis presence bus: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+        }
+    }
+
+    private void stopRedisNetwork() {
+        TeamChatBus bus = this.teamChatBus;
+        this.teamChatBus = null;
+        if (bus != null) {
+            try { bus.stop(); } catch (Exception ignored) {}
+        }
+
+        RedisInviteBus ib = this.inviteBus;
+        this.inviteBus = null;
+        if (ib != null) {
+            try { ib.stop(); } catch (Exception ignored) {}
+        }
+
+        RedisTeamEventBus teb = this.teamEventBus;
+        this.teamEventBus = null;
+        if (teb != null) {
+            try { teb.stop(); } catch (Exception ignored) {}
+        }
+
+        RedisPresenceBus pb = this.presenceBus;
+        this.presenceBus = null;
+        if (pb != null) {
+            try { pb.stop(); } catch (Exception ignored) {}
+        }
+    }
+
     /**
-     * Downloads and loads the JDBC driver for the chosen storage type.
-     *
-     * We keep the plugin jar small by NOT shading any drivers.
-     * Instead, we fetch the needed one into ./plugins/SorekillTeams/libraries/ and load it.
+     * Backwards-compatible behavior:
+     * Redis enabled AND at least one bus is alive.
      */
+    public boolean isRedisNetworkEnabled() {
+        boolean enabled = getConfig().getBoolean("redis.enabled", false);
+        if (!enabled) return false;
+
+        boolean chatOk = teamChatBus != null && teamChatBus.isRunning();
+        boolean invitesOk = inviteBus != null && inviteBus.isRunning();
+        boolean eventsOk = teamEventBus != null && teamEventBus.isRunning();
+        boolean presenceOk = presenceBus != null && presenceBus.isRunning();
+
+        return chatOk || invitesOk || eventsOk || presenceOk;
+    }
+
+    public boolean isPresenceNetworkEnabled() {
+        return presenceBus != null && presenceBus.isRunning();
+    }
+
+    public String networkServerName() {
+        return networkServerName;
+    }
+
+    public void publishTeamChat(TeamChatPacket packet) {
+        if (packet == null) return;
+        TeamChatBus bus = this.teamChatBus;
+        if (bus == null || !bus.isRunning()) return;
+        bus.publish(packet);
+    }
+
+    public void publishInvite(InvitePacket packet) {
+        if (packet == null) return;
+        RedisInviteBus bus = this.inviteBus;
+        if (bus == null || !bus.isRunning()) return;
+        bus.publish(packet);
+    }
+
+    public void publishTeamEvent(TeamEventPacket packet) {
+        if (packet == null) return;
+        RedisTeamEventBus bus = this.teamEventBus;
+        if (bus == null || !bus.isRunning()) return;
+        bus.publish(packet);
+    }
+
+    /**
+     * Called by your local listener when the player "joins".
+     * With Velocity/Bungee, backend swaps can trigger quit/join on different servers.
+     * We still publish, but remote side will dedupe and treat swap as MOVE.
+     */
+    public void markPresenceOnline(Player p) {
+        RedisPresenceBus pb = this.presenceBus;
+        if (pb == null || !pb.isRunning() || p == null) return;
+        pb.markOnline(p);
+    }
+
+    /**
+     * Called by your local listener when the player "quits".
+     * With Velocity/Bungee, backend swaps can trigger this; remote side will dedupe.
+     */
+    public void markPresenceOffline(UUID uuid, String nameHint) {
+        RedisPresenceBus pb = this.presenceBus;
+        if (pb == null || !pb.isRunning() || uuid == null) return;
+        pb.markOffline(uuid, nameHint);
+    }
+
+    public boolean isOnlineNetwork(UUID uuid) {
+        RedisPresenceBus pb = this.presenceBus;
+        if (pb == null || !pb.isRunning()) return false;
+        return pb.isOnlineNetwork(uuid);
+    }
+
+    /**
+     * Called by RedisInviteBus on the main thread after it receives a packet
+     * (and after it ignores self-origin).
+     */
+    public void onRemoteInviteEvent(InvitePacket pkt) {
+        if (pkt == null) return;
+
+        // Keep caches convergent quickly (TTL guarded inside these methods)
+        try {
+            ensureTeamsSnapshotFreshFromSql();
+            ensureTeamFreshFromSql(pkt.inviteeUuid());
+            ensureTeamFreshFromSql(pkt.inviterUuid());
+        } catch (Throwable ignored) {}
+
+        Player invitee = Bukkit.getPlayer(pkt.inviteeUuid());
+        Player inviter = Bukkit.getPlayer(pkt.inviterUuid());
+
+        switch (pkt.type()) {
+            case SENT -> {
+                if (invitee != null && invitee.isOnline()) {
+                    msg().send(invitee, "team_invite_received",
+                            "{inviter}", safe(pkt.inviterName(), "unknown"),
+                            "{team}", Msg.color(safe(pkt.teamName(), "Team"))
+                    );
+                    if (actionbar != null) {
+                        actionbar.send(invitee, "actionbar.team_invite_received",
+                                "{inviter}", safe(pkt.inviterName(), "unknown"),
+                                "{team}", Msg.color(safe(pkt.teamName(), "Team"))
+                        );
+                    }
+                }
+            }
+            case ACCEPTED -> {
+                if (inviter != null && inviter.isOnline()) {
+                    String who = (invitee != null && invitee.getName() != null)
+                            ? invitee.getName()
+                            : safe(pkt.inviteeNameFallback(), "unknown");
+
+                    msg().send(inviter, "team_invite_accepted_inviter",
+                            "{player}", who,
+                            "{team}", Msg.color(safe(pkt.teamName(), "Team"))
+                    );
+                }
+            }
+            case DENIED -> { }
+            case EXPIRED -> { }
+            case CANCELLED -> { }
+        }
+    }
+
+    /**
+     * Called by RedisTeamEventBus on main thread.
+     * Messaging is event-driven (Redis). SQL refresh is state-only.
+     */
+    public void onRemoteTeamEvent(TeamEventPacket pkt) {
+        if (pkt == null) return;
+
+        // Best-effort cache convergence (SQL mode)
+        try {
+            ensureTeamsSnapshotFreshFromSql();
+            if (pkt.actorUuid() != null) ensureTeamFreshFromSql(pkt.actorUuid());
+            if (pkt.targetUuid() != null) ensureTeamFreshFromSql(pkt.targetUuid());
+        } catch (Throwable ignored) {}
+
+        final String key;
+        final String[] pairs;
+
+        switch (pkt.type()) {
+            case MEMBER_JOINED -> {
+                key = "team_member_joined";
+                pairs = new String[]{
+                        "{player}", safe(pkt.targetName(), safe(pkt.actorName(), "unknown")),
+                        "{team}", Msg.color(safe(pkt.teamName(), "Team"))
+                };
+            }
+            case MEMBER_LEFT -> {
+                key = "team_member_left";
+                pairs = new String[]{
+                        "{player}", safe(pkt.targetName(), safe(pkt.actorName(), "unknown")),
+                        "{team}", Msg.color(safe(pkt.teamName(), "Team"))
+                };
+            }
+            case MEMBER_KICKED -> {
+                key = "team_member_kicked_broadcast";
+                pairs = new String[]{
+                        "{player}", safe(pkt.targetName(), "unknown"),
+                        "{team}", Msg.color(safe(pkt.teamName(), "Team"))
+                };
+            }
+            case TEAM_DISBANDED -> {
+                key = "team_team_disbanded";
+                pairs = new String[]{
+                        "{team}", Msg.color(safe(pkt.teamName(), "Team"))
+                };
+            }
+            case TEAM_RENAMED -> {
+                key = "team_renamed_broadcast";
+                pairs = new String[]{
+                        "{team}", Msg.color(safe(pkt.teamName(), "Team")),
+                        "{old}", Msg.color(safe(pkt.targetName(), "Team")),
+                        "{by}", safe(pkt.actorName(), "unknown")
+                };
+            }
+            case OWNER_TRANSFERRED -> {
+                key = "team_owner_transferred_broadcast";
+                pairs = new String[]{
+                        "{owner}", safe(pkt.targetName(), "unknown"),
+                        "{team}", Msg.color(safe(pkt.teamName(), "Team"))
+                };
+            }
+            default -> { return; }
+        }
+
+        // ✅ IMPORTANT: broadcast first (membership still cached), then evict cache if needed
+        broadcastToLocalOnlineMembersOfTeam(pkt.teamId(), key, pairs, pkt.actorUuid(), pkt.targetUuid());
+
+        // ✅ NOW cleanup cache for disband to prevent stale membership
+        if (pkt.type() == TeamEventPacket.Type.TEAM_DISBANDED && teams instanceof SimpleTeamService simple) {
+            try { simple.evictCachedTeam(pkt.teamId()); } catch (Throwable ignored) {}
+        }
+    }
+
+    private void broadcastToLocalOnlineMembersOfTeam(UUID teamId,
+                                                     String messageKey,
+                                                     String[] pairs,
+                                                     UUID... exclude) {
+        if (teamId == null || messageKey == null || messageKey.isBlank()) return;
+        if (teams == null) return;
+
+        for (Player p : Bukkit.getOnlinePlayers()) {
+            if (p == null) continue;
+
+            UUID u = p.getUniqueId();
+            if (u == null) continue;
+
+            // exclude check
+            if (exclude != null) {
+                boolean skip = false;
+                for (UUID ex : exclude) {
+                    if (ex != null && ex.equals(u)) { skip = true; break; }
+                }
+                if (skip) continue;
+            }
+
+            Team t = teams.getTeamByPlayer(u).orElse(null);
+            if (t == null) continue;
+            if (!teamId.equals(t.getId())) continue;
+
+            msg().send(p, messageKey, pairs);
+        }
+    }
+
+    // =========================================================
+    // ✅ Presence (dedup + suppress backend swap spam)
+    // =========================================================
+
+    /**
+     * Called by RedisPresenceBus on main thread.
+     * We suppress "backend swap spam" by deduping and by detecting OFFLINE->ONLINE within a small window.
+     */
+    public void onRemotePresence(PresencePacket pkt) {
+        if (pkt == null || pkt.playerUuid() == null) return;
+
+        // nudge cache convergence
+        try { ensureTeamFreshFromSql(pkt.playerUuid()); } catch (Throwable ignored) {}
+
+        // ✅ Dedup/swap suppression:
+        if (!shouldBroadcastPresence(pkt)) {
+            if (debug != null && debug.enabled()) {
+                getLogger().info("[PRESENCE-DBG] suppressed " + pkt.type() + " for " + pkt.playerUuid()
+                        + " name=" + safe(pkt.playerName(), "?"));
+            }
+            return;
+        }
+
+        Team team = (teams == null) ? null : teams.getTeamByPlayer(pkt.playerUuid()).orElse(null);
+        if (team == null) {
+            // try once shortly after (membership refresh may complete)
+            Bukkit.getScheduler().runTaskLater(this, () -> {
+                Team t2 = (teams == null) ? null : teams.getTeamByPlayer(pkt.playerUuid()).orElse(null);
+                if (t2 == null) return;
+
+                // even on delayed attempt, don't re-spam if state changed again
+                if (!shouldBroadcastPresence(pkt)) return;
+
+                broadcastPresenceToLocalTeammates(t2.getId(), pkt);
+            }, 10L);
+            return;
+        }
+
+        broadcastPresenceToLocalTeammates(team.getId(), pkt);
+    }
+
+    /**
+     * Returns true if this presence event should create a message (proxy join/leave),
+     * false if it's a duplicate or a backend swap.
+     */
+    private boolean shouldBroadcastPresence(PresencePacket pkt) {
+        UUID uuid = pkt.playerUuid();
+        long now = System.currentTimeMillis();
+
+        PresenceState st = presenceState.computeIfAbsent(uuid, k -> new PresenceState());
+
+        long swapWindow = presenceSwapWindowMs();
+
+        if (pkt.type() == PresencePacket.Type.ONLINE) {
+            // duplicate ONLINE while already online -> ignore
+            if (st.online) return false;
+
+            // if we recently got OFFLINE, treat as backend swap and suppress both
+            long dt = now - st.lastOfflineMs;
+            if (st.lastOfflineMs > 0 && dt >= 0 && dt <= swapWindow) {
+                st.online = true;
+                st.lastOnlineMs = now;
+                // suppress this ONLINE (and the prior OFFLINE will have been suppressed or will be)
+                return false;
+            }
+
+            st.online = true;
+            st.lastOnlineMs = now;
+            return true;
+        }
+
+        // OFFLINE
+        if (!st.online) {
+            // duplicate OFFLINE while already offline -> ignore
+            return false;
+        }
+
+        // if we recently got ONLINE, likely a backend swap (quit from old backend)
+        long dt = now - st.lastOnlineMs;
+        if (st.lastOnlineMs > 0 && dt >= 0 && dt <= swapWindow) {
+            st.online = false;
+            st.lastOfflineMs = now;
+            // suppress OFFLINE
+            return false;
+        }
+
+        st.online = false;
+        st.lastOfflineMs = now;
+        return true;
+    }
+
+    private void broadcastPresenceToLocalTeammates(UUID teamId, PresencePacket pkt) {
+        if (teamId == null || pkt == null) return;
+
+        String key = (pkt.type() == PresencePacket.Type.ONLINE) ? "team_member_online" : "team_member_offline";
+
+        broadcastToLocalOnlineMembersOfTeam(teamId, pkt.playerUuid(), key,
+                "{player}", safe(pkt.playerName(), pkt.playerUuid().toString().substring(0, 8)),
+                "{team}", Msg.color(resolveTeamName(teamId))
+        );
+    }
+
+    private String resolveTeamName(UUID teamId) {
+        if (teamId == null || teams == null) return "Team";
+        return teams.getTeamById(teamId).map(Team::getName).orElse("Team");
+    }
+
+    private void broadcastToLocalOnlineMembersOfTeam(UUID teamId, UUID exclude, String key, String... pairs) {
+        if (teamId == null || key == null || key.isBlank()) return;
+        if (teams == null) return;
+
+        for (Player p : Bukkit.getOnlinePlayers()) {
+            if (p == null) continue;
+            UUID u = p.getUniqueId();
+            if (u == null) continue;
+            if (exclude != null && exclude.equals(u)) continue;
+
+            Team t = teams.getTeamByPlayer(u).orElse(null);
+            if (t == null || t.getId() == null) continue;
+            if (!teamId.equals(t.getId())) continue;
+
+            msg().send(p, key, pairs);
+        }
+    }
+
+    private static String safe(String v, String fallback) {
+        return (v == null || v.isBlank()) ? fallback : v;
+    }
+
+    /**
+     * Called by Redis subscriber to deliver a remote message to online teammates on THIS backend.
+     * IMPORTANT: include owner + members, and do not echo to sender.
+     */
+    public void broadcastRemoteTeamChat(UUID teamId, UUID senderUuid, String senderName, String formattedMessage) {
+        if (teamId == null || senderUuid == null) return;
+        if (formattedMessage == null || formattedMessage.isBlank()) return;
+        if (teams == null) return;
+
+        Team t = teams.getTeamById(teamId).orElse(null);
+        if (t == null) return;
+
+        boolean debugChat = getConfig().getBoolean("chat.debug", false);
+
+        String msgOut = formattedMessage;
+        if (debugChat) msgOut = msgOut + Msg.color(" &8[&bREMOTE&8]");
+
+        java.util.LinkedHashSet<UUID> targets = new java.util.LinkedHashSet<>();
+        if (t.getOwner() != null) targets.add(t.getOwner());
+        if (t.getMembers() != null) targets.addAll(t.getMembers());
+
+        for (UUID u : targets) {
+            if (u == null) continue;
+            if (u.equals(senderUuid)) continue;
+
+            Player p = Bukkit.getPlayer(u);
+            if (p != null && p.isOnline()) {
+                p.sendMessage(msgOut);
+            }
+        }
+    }
+
+    // =========================================================
+    // ✅ Redis: runtime load (keeps plugin jar small)
+    // =========================================================
+
+    private void loadRedisLibsIfNeeded(ConfigurationSection sec) {
+        if (redisLibsLoaded) return;
+        if (sec == null) return;
+
+        if (!getDataFolder().exists() && !getDataFolder().mkdirs()) {
+            throw new IllegalStateException("Could not create plugin data folder for library cache: " + getDataFolder().getAbsolutePath());
+        }
+
+        final BukkitLibraryManager lm = new BukkitLibraryManager(this);
+        lm.addRepository("https://repo1.maven.org/maven2/");
+
+        String jedisV = sec.getString("jedis_version", "5.2.0");
+        String poolV = sec.getString("commons_pool2_version", "2.12.0");
+        String slf4jV = sec.getString("slf4j_api_version", "2.0.13");
+
+        final Library slf4jApi = Library.builder()
+                .groupId("org.slf4j")
+                .artifactId("slf4j-api")
+                .version(slf4jV)
+                .build();
+
+        final Library pool2 = Library.builder()
+                .groupId("org.apache.commons")
+                .artifactId("commons-pool2")
+                .version(poolV)
+                .build();
+
+        final Library jedis = Library.builder()
+                .groupId("redis.clients")
+                .artifactId("jedis")
+                .version(jedisV)
+                .build();
+
+        try {
+            getLogger().info("Loading Redis libraries via Libby (jedis=" + jedisV + ", pool2=" + poolV + ", slf4j-api=" + slf4jV + ")");
+            lm.loadLibrary(slf4jApi);
+            lm.loadLibrary(pool2);
+            lm.loadLibrary(jedis);
+            redisLibsLoaded = true;
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to download/load Redis libraries: " +
+                    e.getClass().getSimpleName() + ": " + e.getMessage(), e);
+        }
+    }
+
+    // =========================================================
+    // JDBC runtime loading
+    // =========================================================
+
     private void loadJdbcDriverIfNeeded(String storageType) {
         if (storageType == null) return;
 
@@ -267,14 +847,11 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         if (type.equals("yaml")) return;
         if (Objects.equals(loadedJdbcDriverForType, type)) return;
 
-        // Ensure data folder exists (Libby will cache under plugin folder)
         if (!getDataFolder().exists() && !getDataFolder().mkdirs()) {
             throw new IllegalStateException("Could not create plugin data folder for library cache: " + getDataFolder().getAbsolutePath());
         }
 
         final BukkitLibraryManager lm = new BukkitLibraryManager(this);
-
-        // Maven Central
         lm.addRepository("https://repo1.maven.org/maven2/");
 
         final Library lib;
@@ -300,7 +877,7 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             case "sqlite" -> lib = Library.builder()
                     .groupId("org.xerial")
                     .artifactId("sqlite-jdbc")
-                    .version(getDriverVersionOrThrow("sqlite", "sqlite.driver.version"))
+                    .version(getDriverVersionOrThrow("sqlite", "sqlite.sqlite-jdbc.version"))
                     .build();
 
             case "h2" -> lib = Library.builder()
@@ -324,19 +901,11 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         }
     }
 
-    /**
-     * Reads a version from system properties first (so you can override),
-     * then falls back to hardcoded defaults that match your pom properties.
-     *
-     * Why: the plugin can't read Maven pom properties at runtime.
-     */
     private String getDriverVersionOrThrow(String type, String keyHint) {
-        // Allow overriding via JVM: -Dsorekillteams.mysql.driver.version=...
         String sysKey = "sorekillteams." + type + ".driver.version";
         String v = System.getProperty(sysKey);
         if (v != null && !v.isBlank()) return v.trim();
 
-        // Defaults must match the versions in your pom.xml properties
         return switch (type) {
             case "mysql" -> "9.1.0";
             case "mariadb" -> "3.5.0";
@@ -371,12 +940,12 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             this.storageTypeActive = "yaml";
             this.sqlDialect = null;
 
-            // ✅ if switching to yaml, stop the periodic sql refresh
+            this.sqlInvites = null;
+
             stopSqlAutoRefreshTask();
             return;
         }
 
-        // ✅ Ensure the JDBC driver exists before starting SQL
         loadJdbcDriverIfNeeded(type);
 
         SqlDialect dialect = SqlDialect.fromStorageType(type);
@@ -402,11 +971,12 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
         this.sqlDb = db;
 
+        this.sqlInvites = new SqlTeamInviteStorage(db);
+
         this.storage = new SqlTeamStorage(db);
         this.teams = new SimpleTeamService(this, storage);
         this.storageTypeActive = type;
 
-        // ✅ if switching to sql, (re)start periodic sql refresh
         startSqlAutoRefreshTask();
     }
 
@@ -416,7 +986,7 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             sqlDb = null;
         }
         sqlDialect = null;
-        // keep loadedJdbcDriverForType as-is; no need to unload jars
+        sqlInvites = null;
     }
 
     private void syncHomesWiringFromConfig(boolean isStartup) {
@@ -428,7 +998,7 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             return;
         }
 
-        if (teamHomes == null || !isStartup) {
+        if (teamHomes == null) {
             teamHomes = buildTeamHomeService();
         }
 
@@ -499,7 +1069,7 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             getServer().getScheduler().runTask(this, () -> {
                 try {
                     simple.replaceTeamsSnapshot(loaded);
-                    lastSnapshotRefreshMs = System.currentTimeMillis(); // ✅ only after success
+                    lastSnapshotRefreshMs = System.currentTimeMillis();
                 } finally {
                     snapshotRefreshInFlight.set(false);
                 }
@@ -509,7 +1079,6 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
     public void ensureTeamFreshFromSql(UUID playerUuid) {
         if (playerUuid == null) return;
-
         if ("yaml".equalsIgnoreCase(storageTypeActive)) return;
         if (!(teams instanceof SimpleTeamService simple)) return;
         if (!(storage instanceof SqlTeamStorage sqlStorage)) return;
@@ -521,37 +1090,17 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         if (now - last < ttlMs) return;
         lastSqlMembershipCheckMs.put(playerUuid, now);
 
-        // ✅ Capture what we currently believe (main thread)
-        UUID cachedTeamId = simple.getTeamByPlayer(playerUuid).map(Team::getId).orElse(null);
-        String cachedTeamName = simple.getTeamByPlayer(playerUuid).map(Team::getName).orElse("Team");
-
         getServer().getScheduler().runTaskAsynchronously(this, () -> {
-            UUID sqlTeamId = null;
-            Team loadedTeam = null;
-
-            // If SQL says "no team", we still need to determine:
-            // - was the team disbanded? (team row missing)
-            // - or was player kicked/removed? (team still exists)
-            boolean oldTeamStillExistsInSql = false;
-            String oldTeamNameFromSql = null;
-            UUID oldTeamOwnerFromSql = null;
+            UUID sqlTeamId;
+            Team loadedTeam;
 
             try {
                 sqlTeamId = sqlStorage.findTeamIdForMember(playerUuid);
 
+                loadedTeam = null;
                 if (sqlTeamId != null) {
                     loadedTeam = sqlStorage.loadTeamById(sqlTeamId);
                     if (loadedTeam == null) sqlTeamId = null;
-                }
-
-                // ✅ If player lost membership, check whether their OLD team still exists in SQL
-                if (sqlTeamId == null && cachedTeamId != null) {
-                    Team old = sqlStorage.loadTeamById(cachedTeamId);
-                    if (old != null) {
-                        oldTeamStillExistsInSql = true;
-                        oldTeamNameFromSql = old.getName();
-                        oldTeamOwnerFromSql = old.getOwner();
-                    }
                 }
 
             } catch (Exception e) {
@@ -563,53 +1112,16 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             UUID finalSqlTeamId = sqlTeamId;
             Team finalLoadedTeam = loadedTeam;
 
-            boolean finalOldTeamStillExistsInSql = oldTeamStillExistsInSql;
-            String finalOldTeamNameFromSql = oldTeamNameFromSql;
-            UUID finalOldTeamOwnerFromSql = oldTeamOwnerFromSql;
-
             getServer().getScheduler().runTask(this, () -> {
                 UUID currentCached = simple.getTeamByPlayer(playerUuid).map(Team::getId).orElse(null);
 
-                // If we're already in sync, do nothing.
                 if (Objects.equals(currentCached, finalSqlTeamId)) return;
 
-                // ✅ SQL says: player has NO team
                 if (finalSqlTeamId == null) {
-
-                    // If they previously had a team, decide if this is DISBAND vs KICK/REMOVAL
-                    if (currentCached != null) {
-                        Player online = Bukkit.getPlayer(playerUuid);
-                        if (online != null) {
-                            if (finalOldTeamStillExistsInSql) {
-                                // Team still exists -> very likely kicked/removed
-                                String teamName = (finalOldTeamNameFromSql != null && !finalOldTeamNameFromSql.isBlank())
-                                        ? finalOldTeamNameFromSql
-                                        : cachedTeamName;
-
-                                String byName = "unknown";
-                                if (finalOldTeamOwnerFromSql != null) {
-                                    byName = simple.nameOf(finalOldTeamOwnerFromSql);
-                                }
-
-                                // Reuse your existing message key (expects {team} and {by})
-                                msg().send(online, "team_kick_target",
-                                        "{team}", Msg.color(teamName),
-                                        "{by}", byName
-                                );
-                            } else {
-                                // Team is gone in SQL -> disband
-                                msg().send(online, "team_team_disbanded",
-                                        "{team}", Msg.color(cachedTeamName)
-                                );
-                            }
-                        }
-                    }
-
                     simple.clearCachedMembership(playerUuid);
                     return;
                 }
 
-                // ✅ SQL says: player IS in a team
                 if (finalLoadedTeam != null) {
                     simple.putLoadedTeam(finalLoadedTeam);
                 } else {
@@ -624,24 +1136,16 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         ensureTeamFreshFromSql(player.getUniqueId());
     }
 
-    // =========================================================
-    // ✅ NEW: periodic SQL refresh task
-    // =========================================================
-
     public void startSqlAutoRefreshTask() {
-        // Always stop any existing one first (covers reload)
         stopSqlAutoRefreshTask();
 
         if ("yaml".equalsIgnoreCase(storageTypeActive)) return;
 
-        long periodTicks = Math.max(20L, getConfig().getLong("storage.sql_auto_refresh_period_ticks", 40L)); // default 2s
+        long periodTicks = Math.max(20L, getConfig().getLong("storage.sql_auto_refresh_period_ticks", 40L));
 
         sqlRefreshTaskId = getServer().getScheduler().runTaskTimer(this, () -> {
             try {
-                // 1) Global snapshot refresh (browse lists / team existence)
                 ensureTeamsSnapshotFreshFromSql();
-
-                // 2) Membership refresh for online players (kicks/disbands show up without commands)
                 for (Player p : Bukkit.getOnlinePlayers()) {
                     if (p == null) continue;
                     ensureTeamFreshFromSql(p.getUniqueId());
@@ -652,7 +1156,7 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         }, periodTicks, periodTicks).getTaskId();
     }
 
-    public void stopSqlAutoRefreshTask() {
+    private void stopSqlAutoRefreshTask() {
         if (sqlRefreshTaskId < 0) return;
         stopTask(sqlRefreshTaskId);
         sqlRefreshTaskId = -1;
@@ -706,7 +1210,7 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     private String getMenusFileNameSafe() {
         String v = null;
         try { v = getConfig().getString("files.menus", "menus.yml"); }
-        catch (Exception ignored) {}
+       catch (Exception ignored) {}
         return (v == null || v.isBlank()) ? "menus.yml" : v.trim();
     }
 
@@ -718,7 +1222,19 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
         invitePurgeTaskId = getServer().getScheduler().scheduleSyncRepeatingTask(
                 this,
-                () -> invites.purgeExpiredAll(System.currentTimeMillis()),
+                () -> {
+                    long now = System.currentTimeMillis();
+
+                    invites.purgeExpiredAll(now);
+
+                    if (!"yaml".equalsIgnoreCase(storageTypeActive) && sqlInvites != null) {
+                        try {
+                            sqlInvites.purgeExpired(now);
+                        } catch (Exception e) {
+                            getLogger().warning("SQL invite purge failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+                        }
+                    }
+                },
                 ticks,
                 ticks
         );
@@ -743,7 +1259,6 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         ).getTaskId();
     }
 
-    // ✅ autosave must NOT rewrite SQL from stale caches.
     private void trySaveNowAsync(String reason) {
         if (!saveInFlight.compareAndSet(false, true)) return;
 
@@ -843,6 +1358,8 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
     public TeamInvites invites() { return invites; }
 
+    public SqlTeamInviteStorage sqlInvites() { return sqlInvites; }
+
     public UpdateChecker updateChecker() { return updateChecker; }
 
     public TeamHomeService teamHomes() { return teamHomes; }
@@ -850,6 +1367,19 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
     public boolean isFriendlyFireToggleEnabled() {
         return getConfig().getBoolean("friendly_fire.toggle_enabled", true);
+    }
+
+    public boolean isTeamChatToggleEnabled() {
+        return getConfig().getBoolean("chat.toggle_enabled", true);
+    }
+
+    public boolean isTeamChatEnabled() {
+        return getConfig().getBoolean("chat.enabled", true);
+    }
+
+    public boolean isTeamChatNetworkEnabled() {
+        if (!getConfig().getBoolean("redis.enabled", false)) return false;
+        return teamChatBus != null && teamChatBus.isRunning();
     }
 
     public String storageTypeActive() {

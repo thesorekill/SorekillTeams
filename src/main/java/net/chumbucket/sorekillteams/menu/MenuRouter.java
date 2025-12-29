@@ -241,7 +241,7 @@ public final class MenuRouter {
         }
 
         if (a.equalsIgnoreCase("TEAMCHAT:TOGGLE")) {
-            if (!plugin.getConfig().getBoolean("team_chat.toggle_enabled", true)) {
+            if (!plugin.isTeamChatToggleEnabled()) {
                 plugin.msg().send(p, "teamchat_toggle_disabled");
                 return;
             }

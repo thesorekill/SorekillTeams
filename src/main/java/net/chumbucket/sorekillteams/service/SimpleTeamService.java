@@ -14,7 +14,11 @@ import net.chumbucket.sorekillteams.SorekillTeamsPlugin;
 import net.chumbucket.sorekillteams.model.Team;
 import net.chumbucket.sorekillteams.model.TeamInvite;
 import net.chumbucket.sorekillteams.model.TeamInvites;
+import net.chumbucket.sorekillteams.network.InvitePacket;
+import net.chumbucket.sorekillteams.network.TeamChatPacket;
+import net.chumbucket.sorekillteams.network.TeamEventPacket;
 import net.chumbucket.sorekillteams.storage.TeamStorage;
+import net.chumbucket.sorekillteams.storage.sql.SqlTeamInviteStorage;
 import net.chumbucket.sorekillteams.util.Msg;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
@@ -31,6 +35,8 @@ public final class SimpleTeamService implements TeamService {
 
     private final SorekillTeamsPlugin plugin;
     private final TeamStorage storage;
+
+    // YAML mode invite store (kept for compatibility)
     private final TeamInvites invites;
 
     private final Map<UUID, Team> teams = new ConcurrentHashMap<>();
@@ -51,6 +57,14 @@ public final class SimpleTeamService implements TeamService {
         this.invites = Objects.requireNonNull(plugin.invites(), "invites");
     }
 
+    private boolean isSqlMode() {
+        return !"yaml".equalsIgnoreCase(plugin.storageTypeActive()) && plugin.sqlInvites() != null;
+    }
+
+    private SqlTeamInviteStorage sqlInvites() {
+        return plugin.sqlInvites();
+    }
+
     // =========================
     // Dirty tracking
     // =========================
@@ -63,10 +77,6 @@ public final class SimpleTeamService implements TeamService {
     // Cache hygiene / SQL refresh support
     // =========================
 
-    /**
-     * ✅ FIX: actually remove cached membership mapping.
-     * (If SQL says they have no team, playerToTeam must be cleared.)
-     */
     public void clearCachedMembership(UUID playerUuid) {
         if (playerUuid == null) return;
 
@@ -75,25 +85,15 @@ public final class SimpleTeamService implements TeamService {
         invites.clearTarget(playerUuid);
     }
 
-    /**
-     * Remove a team from local cache.
-     * Cache reconciliation ONLY — does NOT mark dirty.
-     *
-     * IMPORTANT:
-     * - Do NOT clear homes here (storage is authoritative)
-     * - Do NOT clear TeamInvites globally here (invites are runtime-only)
-     */
     public void evictCachedTeam(UUID teamId) {
         if (teamId == null) return;
 
         Team removed = teams.remove(teamId);
         if (removed == null) {
-            // still prune spy watchers if team is gone locally
             removeTeamFromAllSpyTargets(teamId);
             return;
         }
 
-        // remove membership mappings that pointed to this team
         for (UUID m : new HashSet<>(removed.getMembers())) {
             if (m == null) continue;
             UUID mapped = playerToTeam.get(m);
@@ -104,22 +104,10 @@ public final class SimpleTeamService implements TeamService {
             }
         }
 
-        // prune spy watchers for this team id
         removeTeamFromAllSpyTargets(teamId);
     }
 
-    /**
-     * Replace the entire teams snapshot from SQL.
-     * Does NOT mark dirty.
-     *
-     * This is what fixes "browse teams still shows disbanded teams" on other backends.
-     */
     public void replaceTeamsSnapshot(Collection<Team> loadedTeams) {
-
-        // ✅ Capture old snapshot so we can detect removals and notify
-        Map<UUID, Team> oldTeams = new HashMap<>(teams);
-
-        // Build new snapshots first
         Map<UUID, Team> newTeams = new HashMap<>();
         Map<UUID, UUID> newPlayerToTeam = new HashMap<>();
 
@@ -137,35 +125,29 @@ public final class SimpleTeamService implements TeamService {
             }
         }
 
-        // ✅ Detect teams that existed before but no longer exist in SQL snapshot
-        // This is the "team was disbanded elsewhere" case.
-        for (Map.Entry<UUID, Team> e : oldTeams.entrySet()) {
-            UUID oldId = e.getKey();
-            if (oldId == null) continue;
+        /*
+         * IMPORTANT:
+         * Snapshots must be SILENT.
+         *
+         * Previously we broadcasted "team disbanded" here when a team disappeared
+         * between snapshots. In SQL mode, that causes a double message because:
+         *  - the command/service broadcasts immediately, AND
+         *  - the SQL refresh removes the team and this diff broadcast fires again.
+         *
+         * Disband messaging is now strictly event-driven:
+         *  - Origin server sends local message during disbandTeam/adminDisbandTeam
+         *  - Other servers show the message when they receive Redis TEAM_DISBANDED
+         */
+        // (no broadcast on snapshot diff)
 
-            if (!newTeams.containsKey(oldId)) {
-                Team removed = e.getValue();
-                if (removed != null) {
-                    // message online members NOW (offline players can't be messaged)
-                    broadcastToTeam(removed, plugin.msg().format(
-                            "team_team_disbanded",
-                            "{team}", Msg.color(removed.getName())
-                    ));
-                }
-            }
-        }
-
-        // Swap in one direction (called on main thread)
         teams.clear();
         teams.putAll(newTeams);
 
         playerToTeam.clear();
         playerToTeam.putAll(newPlayerToTeam);
 
-        // Prune runtime-only state that depends on membership/teams
         teamChatToggled.removeIf(u -> !playerToTeam.containsKey(u));
 
-        // prune spy targets for teams that no longer exist
         spyTargets.entrySet().removeIf(e -> {
             Set<UUID> watching = e.getValue();
             if (watching == null) return true;
@@ -173,7 +155,6 @@ public final class SimpleTeamService implements TeamService {
             return watching.isEmpty();
         });
 
-        // Snapshot loads must not mark dirty
         dirty.set(false);
     }
 
@@ -191,7 +172,6 @@ public final class SimpleTeamService implements TeamService {
         for (UUID m : t.getMembers()) {
             if (m != null) playerToTeam.put(m, t.getId());
         }
-        // loading/backfill should NOT mark dirty
     }
 
     public void putAllTeams(Collection<Team> loadedTeams) {
@@ -286,6 +266,24 @@ public final class SimpleTeamService implements TeamService {
 
         markDirty();
         safeSave();
+
+        if (isSqlMode()) {
+            try { sqlInvites().deleteAllForTeam(t.getId()); } catch (Exception ignored) {}
+        }
+
+        // ✅ Redis: team disbanded
+        // FIX: keep constructor arg-shape consistent with the rest of the codebase (targetUuid + targetName present)
+        publishTeamEvent(new TeamEventPacket(
+                plugin.networkServerName(),
+                TeamEventPacket.Type.TEAM_DISBANDED,
+                t.getId(),
+                t.getName(),
+                owner,
+                safeName(nameOf(owner)),
+                null,
+                "",
+                System.currentTimeMillis()
+        ));
     }
 
     @Override
@@ -314,6 +312,19 @@ public final class SimpleTeamService implements TeamService {
                 "team_member_left",
                 "{player}", nameOf(player),
                 "{team}", Msg.color(t.getName())
+        ));
+
+        // ✅ Redis: member left
+        publishTeamEvent(new TeamEventPacket(
+                plugin.networkServerName(),
+                TeamEventPacket.Type.MEMBER_LEFT,
+                t.getId(),
+                t.getName(),
+                player,
+                safeName(nameOf(player)),
+                player,
+                safeName(nameOf(player)),
+                System.currentTimeMillis()
         ));
     }
 
@@ -347,23 +358,6 @@ public final class SimpleTeamService implements TeamService {
 
         long now = System.currentTimeMillis();
 
-        int maxPending = Math.max(1, plugin.getConfig().getInt("invites.max_pending_per_player", 5));
-        int pendingNow = invites.pendingForTarget(invitee, now);
-        if (pendingNow >= maxPending) {
-            throw new TeamServiceException(TeamError.INVITE_TARGET_MAX_PENDING, "team_invite_target_max_pending");
-        }
-
-        int maxOutgoing = Math.max(1, plugin.getConfig().getInt("invites.max_outgoing_per_team", 10));
-        int outgoingNow = invites.outgoingForTeam(t.getId(), now);
-        if (outgoingNow >= maxOutgoing) {
-            throw new TeamServiceException(TeamError.INVITE_TEAM_MAX_OUTGOING, "team_invite_team_max_outgoing");
-        }
-
-        boolean allowMultiTeams = plugin.getConfig().getBoolean("invites.allow_multiple_from_different_teams", true);
-        if (!allowMultiTeams && invites.hasInviteFromOtherTeam(invitee, t.getId(), now)) {
-            throw new TeamServiceException(TeamError.INVITE_ONLY_ONE_TEAM, "team_invite_only_one_team");
-        }
-
         int cdSeconds = Math.max(0, plugin.getConfig().getInt("invites.cooldown_seconds", 10));
         if (cdSeconds > 0) {
             long until = inviteCooldownUntil.getOrDefault(inviter, 0L);
@@ -381,6 +375,70 @@ public final class SimpleTeamService implements TeamService {
         int expirySeconds = Math.max(1, plugin.getConfig().getInt("invites.expiry_seconds", 300));
         long expiresAt = now + (expirySeconds * 1000L);
 
+        String inviterName = safeName(nameOf(inviter));
+        String inviteeName = safeName(nameOf(invitee));
+
+        if (isSqlMode()) {
+            SqlTeamInviteStorage sql = sqlInvites();
+
+            try {
+                int maxPending = Math.max(1, plugin.getConfig().getInt("invites.max_pending_per_player", 5));
+                int pendingNow = sql.pendingForTarget(invitee, now);
+                if (pendingNow >= maxPending) {
+                    throw new TeamServiceException(TeamError.INVITE_TARGET_MAX_PENDING, "team_invite_target_max_pending");
+                }
+
+                int maxOutgoing = Math.max(1, plugin.getConfig().getInt("invites.max_outgoing_per_team", 10));
+                int outgoingNow = sql.outgoingForTeam(t.getId(), now);
+                if (outgoingNow >= maxOutgoing) {
+                    throw new TeamServiceException(TeamError.INVITE_TEAM_MAX_OUTGOING, "team_invite_team_max_outgoing");
+                }
+
+                boolean allowMultiTeams = plugin.getConfig().getBoolean("invites.allow_multiple_from_different_teams", true);
+                if (!allowMultiTeams && sql.hasInviteFromOtherTeam(invitee, t.getId(), now)) {
+                    throw new TeamServiceException(TeamError.INVITE_ONLY_ONE_TEAM, "team_invite_only_one_team");
+                }
+
+                sql.upsert(t.getId(), inviter, invitee, now, expiresAt);
+
+                plugin.publishInvite(new InvitePacket(
+                        plugin.networkServerName(),
+                        InvitePacket.Type.SENT,
+                        t.getId(),
+                        t.getName(),
+                        inviter,
+                        inviterName,
+                        invitee,
+                        inviteeName,
+                        now,
+                        expiresAt
+                ));
+                return;
+
+            } catch (TeamServiceException te) {
+                throw te;
+            } catch (Exception e) {
+                plugin.getLogger().warning("SQL invite failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+            }
+        }
+
+        int maxPending = Math.max(1, plugin.getConfig().getInt("invites.max_pending_per_player", 5));
+        int pendingNow = invites.pendingForTarget(invitee, now);
+        if (pendingNow >= maxPending) {
+            throw new TeamServiceException(TeamError.INVITE_TARGET_MAX_PENDING, "team_invite_target_max_pending");
+        }
+
+        int maxOutgoing = Math.max(1, plugin.getConfig().getInt("invites.max_outgoing_per_team", 10));
+        int outgoingNow = invites.outgoingForTeam(t.getId(), now);
+        if (outgoingNow >= maxOutgoing) {
+            throw new TeamServiceException(TeamError.INVITE_TEAM_MAX_OUTGOING, "team_invite_team_max_outgoing");
+        }
+
+        boolean allowMultiTeams = plugin.getConfig().getBoolean("invites.allow_multiple_from_different_teams", true);
+        if (!allowMultiTeams && invites.hasInviteFromOtherTeam(invitee, t.getId(), now)) {
+            throw new TeamServiceException(TeamError.INVITE_ONLY_ONE_TEAM, "team_invite_only_one_team");
+        }
+
         TeamInvite inv = new TeamInvite(
                 t.getId(),
                 t.getName(),
@@ -393,13 +451,45 @@ public final class SimpleTeamService implements TeamService {
         boolean refreshOnReinvite = plugin.getConfig().getBoolean("invites.reinvite_refreshes_expiry", true);
         if (refreshOnReinvite) {
             boolean refreshed = invites.refresh(invitee, t.getId(), inv, now);
-            if (refreshed) return;
+            if (refreshed) {
+                plugin.publishInvite(new InvitePacket(
+                        plugin.networkServerName(),
+                        InvitePacket.Type.SENT,
+                        t.getId(),
+                        t.getName(),
+                        inviter,
+                        inviterName,
+                        invitee,
+                        inviteeName,
+                        now,
+                        expiresAt
+                ));
+                return;
+            }
         }
 
         boolean created = invites.create(inv, now);
         if (!created) {
             throw new TeamServiceException(TeamError.INVITE_ALREADY_PENDING, "team_invite_already_pending");
         }
+
+        plugin.publishInvite(new InvitePacket(
+                plugin.networkServerName(),
+                InvitePacket.Type.SENT,
+                t.getId(),
+                t.getName(),
+                inviter,
+                inviterName,
+                invitee,
+                inviteeName,
+                now,
+                expiresAt
+        ));
+    }
+
+    private static String safeName(String name) {
+        if (name == null || name.isBlank()) return "";
+        return name;
     }
 
     @Override
@@ -407,13 +497,102 @@ public final class SimpleTeamService implements TeamService {
         if (invitee == null) return Optional.empty();
 
         long now = System.currentTimeMillis();
-        List<TeamInvite> active = invites.listActive(invitee, now);
-        if (active.isEmpty()) return Optional.empty();
 
         if (playerToTeam.containsKey(invitee)) {
             invites.clearTarget(invitee);
             throw new TeamServiceException(TeamError.ALREADY_IN_TEAM, "team_already_in_team");
         }
+
+        if (isSqlMode()) {
+            SqlTeamInviteStorage sql = sqlInvites();
+
+            List<TeamInvite> active;
+            try {
+                active = sql.listActive(invitee, now, id -> {
+                    Team t = teams.get(id);
+                    return (t == null ? "Team" : t.getName());
+                });
+            } catch (Exception e) {
+                plugin.getLogger().warning("SQL invite list failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+                active = List.of();
+            }
+
+            if (active.isEmpty()) return Optional.empty();
+
+            final TeamInvite inv;
+            if (teamId != null && teamId.isPresent()) {
+                UUID id = teamId.get();
+                inv = active.stream().filter(i -> i.getTeamId().equals(id)).findFirst().orElse(null);
+                if (inv == null) return Optional.empty();
+            } else {
+                if (active.size() > 1) {
+                    throw new TeamServiceException(TeamError.MULTIPLE_INVITES, "team_multiple_invites_hint");
+                }
+                inv = active.get(0);
+            }
+
+            Team t = teams.get(inv.getTeamId());
+            if (t == null) {
+                try { sql.delete(invitee, inv.getTeamId()); } catch (Exception ignored) {}
+                throw new TeamServiceException(TeamError.INVITE_EXPIRED, "team_invite_expired");
+            }
+
+            ensureOwnerInMembers(t);
+            dedupeMembers(t);
+
+            int max = getTeamMaxMembers(t);
+            if (uniqueMemberCount(t) >= max) {
+                throw new TeamServiceException(TeamError.TEAM_FULL, "team_team_full");
+            }
+
+            t.getMembers().add(invitee);
+            ensureOwnerInMembers(t);
+            dedupeMembers(t);
+
+            playerToTeam.put(invitee, t.getId());
+
+            try { sql.delete(invitee, inv.getTeamId()); } catch (Exception ignored) {}
+
+            markDirty();
+            safeSave();
+
+            broadcastToTeam(t, plugin.msg().format(
+                    "team_member_joined",
+                    "{player}", nameOf(invitee),
+                    "{team}", Msg.color(t.getName())
+            ));
+
+            plugin.publishInvite(new InvitePacket(
+                    plugin.networkServerName(),
+                    InvitePacket.Type.ACCEPTED,
+                    t.getId(),
+                    t.getName(),
+                    inv.getInviter(),
+                    safeName(nameOf(inv.getInviter())),
+                    invitee,
+                    safeName(nameOf(invitee)),
+                    now,
+                    0L
+            ));
+
+            // ✅ Redis: member joined
+            publishTeamEvent(new TeamEventPacket(
+                    plugin.networkServerName(),
+                    TeamEventPacket.Type.MEMBER_JOINED,
+                    t.getId(),
+                    t.getName(),
+                    invitee,
+                    safeName(nameOf(invitee)),
+                    invitee,
+                    safeName(nameOf(invitee)),
+                    now
+            ));
+
+            return Optional.of(inv);
+        }
+
+        List<TeamInvite> active = invites.listActive(invitee, now);
+        if (active.isEmpty()) return Optional.empty();
 
         final TeamInvite inv;
         if (teamId != null && teamId.isPresent()) {
@@ -462,6 +641,32 @@ public final class SimpleTeamService implements TeamService {
                 "{team}", Msg.color(t.getName())
         ));
 
+        plugin.publishInvite(new InvitePacket(
+                plugin.networkServerName(),
+                InvitePacket.Type.ACCEPTED,
+                t.getId(),
+                t.getName(),
+                inv.getInviter(),
+                safeName(nameOf(inv.getInviter())),
+                invitee,
+                safeName(nameOf(invitee)),
+                now,
+                0L
+        ));
+
+        // ✅ Redis: member joined
+        publishTeamEvent(new TeamEventPacket(
+                plugin.networkServerName(),
+                TeamEventPacket.Type.MEMBER_JOINED,
+                t.getId(),
+                t.getName(),
+                invitee,
+                safeName(nameOf(invitee)),
+                invitee,
+                safeName(nameOf(invitee)),
+                now
+        ));
+
         return Optional.of(inv);
     }
 
@@ -470,27 +675,115 @@ public final class SimpleTeamService implements TeamService {
         if (invitee == null) return false;
 
         long now = System.currentTimeMillis();
+
+        if (isSqlMode()) {
+            SqlTeamInviteStorage sql = sqlInvites();
+
+            List<TeamInvite> active;
+            try {
+                active = sql.listActive(invitee, now, id -> {
+                    Team t = teams.get(id);
+                    return (t == null ? "Team" : t.getName());
+                });
+            } catch (Exception e) {
+                plugin.getLogger().warning("SQL invite list failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+                active = List.of();
+            }
+
+            if (active.isEmpty()) return false;
+
+            TeamInvite invToDeny;
+            if (teamId != null && teamId.isPresent()) {
+                UUID id = teamId.get();
+                invToDeny = active.stream().filter(i -> i.getTeamId().equals(id)).findFirst().orElse(null);
+                if (invToDeny == null) return false;
+            } else {
+                if (active.size() > 1) {
+                    throw new TeamServiceException(TeamError.MULTIPLE_INVITES, "team_multiple_invites_hint");
+                }
+                invToDeny = active.get(0);
+            }
+
+            boolean removed = false;
+            try { removed = sql.delete(invitee, invToDeny.getTeamId()); } catch (Exception ignored) {}
+
+            if (removed) {
+                Team t = teams.get(invToDeny.getTeamId());
+                String teamName = (t != null) ? t.getName() : invToDeny.getTeamName();
+
+                plugin.publishInvite(new InvitePacket(
+                        plugin.networkServerName(),
+                        InvitePacket.Type.DENIED,
+                        invToDeny.getTeamId(),
+                        teamName,
+                        invToDeny.getInviter(),
+                        safeName(nameOf(invToDeny.getInviter())),
+                        invitee,
+                        safeName(nameOf(invitee)),
+                        now,
+                        0L
+                ));
+            }
+
+            return removed;
+        }
+
         List<TeamInvite> active = invites.listActive(invitee, now);
         if (active.isEmpty()) {
             invites.clearTarget(invitee);
             return false;
         }
 
+        final TeamInvite invToDeny;
         if (teamId != null && teamId.isPresent()) {
-            return invites.remove(invitee, teamId.get());
+            invToDeny = invites.get(invitee, teamId.get(), now).orElse(null);
+            if (invToDeny == null) return false;
+        } else {
+            if (active.size() > 1) {
+                throw new TeamServiceException(TeamError.MULTIPLE_INVITES, "team_multiple_invites_hint");
+            }
+            invToDeny = active.get(0);
         }
 
-        if (active.size() > 1) {
-            throw new TeamServiceException(TeamError.MULTIPLE_INVITES, "team_multiple_invites_hint");
+        boolean removed = invites.remove(invitee, invToDeny.getTeamId());
+        if (removed) {
+            Team t = teams.get(invToDeny.getTeamId());
+            String teamName = (t != null) ? t.getName() : invToDeny.getTeamName();
+
+            plugin.publishInvite(new InvitePacket(
+                    plugin.networkServerName(),
+                    InvitePacket.Type.DENIED,
+                    invToDeny.getTeamId(),
+                    teamName,
+                    invToDeny.getInviter(),
+                    safeName(nameOf(invToDeny.getInviter())),
+                    invitee,
+                    safeName(nameOf(invitee)),
+                    now,
+                    0L
+            ));
         }
 
-        return invites.remove(invitee, active.get(0).getTeamId());
+        return removed;
     }
 
     @Override
     public Collection<TeamInvite> getInvites(UUID invitee) {
         if (invitee == null) return List.of();
         long now = System.currentTimeMillis();
+
+        if (isSqlMode()) {
+            try {
+                return sqlInvites().listActive(invitee, now, id -> {
+                    Team t = teams.get(id);
+                    return (t == null ? "Team" : t.getName());
+                });
+            } catch (Exception e) {
+                plugin.getLogger().warning("SQL invite list failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+                return List.of();
+            }
+        }
+
         return invites.listActive(invitee, now);
     }
 
@@ -538,6 +831,19 @@ public final class SimpleTeamService implements TeamService {
                 "{player}", nameOf(member),
                 "{team}", Msg.color(t.getName())
         ));
+
+        // ✅ Redis: member kicked
+        publishTeamEvent(new TeamEventPacket(
+                plugin.networkServerName(),
+                TeamEventPacket.Type.MEMBER_KICKED,
+                t.getId(),
+                t.getName(),
+                owner,
+                safeName(nameOf(owner)),
+                member,
+                safeName(nameOf(member)),
+                System.currentTimeMillis()
+        ));
     }
 
     @Override
@@ -571,6 +877,19 @@ public final class SimpleTeamService implements TeamService {
                 "team_owner_transferred_broadcast",
                 "{owner}", nameOf(newOwner),
                 "{team}", Msg.color(t.getName())
+        ));
+
+        // ✅ Redis: owner transferred
+        publishTeamEvent(new TeamEventPacket(
+                plugin.networkServerName(),
+                TeamEventPacket.Type.OWNER_TRANSFERRED,
+                t.getId(),
+                t.getName(),
+                owner,
+                safeName(nameOf(owner)),
+                newOwner,
+                safeName(nameOf(newOwner)),
+                System.currentTimeMillis()
         ));
     }
 
@@ -608,6 +927,20 @@ public final class SimpleTeamService implements TeamService {
                 "{team}", Msg.color(t.getName()),
                 "{by}", nameOf(owner),
                 "{old}", Msg.color(old)
+        ));
+
+        // ✅ Redis: team renamed
+        // Convention: teamName=newName, targetName=oldName
+        publishTeamEvent(new TeamEventPacket(
+                plugin.networkServerName(),
+                TeamEventPacket.Type.TEAM_RENAMED,
+                t.getId(),
+                t.getName(),
+                owner,
+                safeName(nameOf(owner)),
+                null,
+                old,
+                System.currentTimeMillis()
         ));
     }
 
@@ -662,14 +995,35 @@ public final class SimpleTeamService implements TeamService {
             fmt = "&8&l(&c&l{team}&8&l) &f{player} &8&l> &c{message}";
         }
 
+        String coloredMsg = Msg.color(msg);
+
         String out = Msg.color(
                 fmt.replace("{player}", sender.getName())
                         .replace("{team}", Msg.color(team.getName()))
-                        .replace("{message}", Msg.color(msg))
+                        .replace("{message}", coloredMsg)
         );
 
+        // ✅ Debug tagging (helps prove where duplicates originate)
+        boolean debug = plugin.getConfig().getBoolean("chat.debug", false);
+        if (debug) out = out + Msg.color(" &8[&aLOCAL&8]");
+
+        // 1) Local broadcast
         broadcastToTeam(team, out);
-        broadcastToSpy(team, sender.getUniqueId(), sender.getName(), Msg.color(msg));
+
+        // 2) Local spy broadcast
+        broadcastToSpy(team, sender.getUniqueId(), sender.getName(), coloredMsg);
+
+        // 3) Cross-server publish (ONLY if network is enabled/running)
+        if (plugin.isTeamChatNetworkEnabled()) {
+            plugin.publishTeamChat(new TeamChatPacket(
+                    plugin.networkServerName(),
+                    team.getId(),
+                    sender.getUniqueId(),
+                    sender.getName(),
+                    out,
+                    System.currentTimeMillis()
+            ));
+        }
     }
 
     // =========================
@@ -783,6 +1137,23 @@ public final class SimpleTeamService implements TeamService {
 
         markDirty();
         safeSave();
+
+        if (isSqlMode()) {
+            try { sqlInvites().deleteAllForTeam(teamId); } catch (Exception ignored) {}
+        }
+
+        // FIX: keep constructor arg-shape consistent (targetUuid + targetName present)
+        publishTeamEvent(new TeamEventPacket(
+                plugin.networkServerName(),
+                TeamEventPacket.Type.TEAM_DISBANDED,
+                teamId,
+                t.getName(),
+                t.getOwner() == null ? UUID.randomUUID() : t.getOwner(),
+                safeName(nameOf(t.getOwner())),
+                null,
+                "",
+                System.currentTimeMillis()
+        ));
     }
 
     @Override
@@ -797,6 +1168,7 @@ public final class SimpleTeamService implements TeamService {
             adminKickPlayer(newOwner);
         }
 
+        UUID oldOwner = t.getOwner();
         t.setOwner(newOwner);
         ensureOwnerInMembers(t);
         dedupeMembers(t);
@@ -810,6 +1182,18 @@ public final class SimpleTeamService implements TeamService {
                 "team_owner_transferred_broadcast",
                 "{owner}", nameOf(newOwner),
                 "{team}", Msg.color(t.getName())
+        ));
+
+        publishTeamEvent(new TeamEventPacket(
+                plugin.networkServerName(),
+                TeamEventPacket.Type.OWNER_TRANSFERRED,
+                t.getId(),
+                t.getName(),
+                (oldOwner == null ? newOwner : oldOwner),
+                safeName(nameOf(oldOwner)),
+                newOwner,
+                safeName(nameOf(newOwner)),
+                System.currentTimeMillis()
         ));
     }
 
@@ -841,6 +1225,18 @@ public final class SimpleTeamService implements TeamService {
                 "{player}", nameOf(player),
                 "{team}", Msg.color(t.getName())
         ));
+
+        publishTeamEvent(new TeamEventPacket(
+                plugin.networkServerName(),
+                TeamEventPacket.Type.MEMBER_KICKED,
+                t.getId(),
+                t.getName(),
+                t.getOwner() == null ? UUID.randomUUID() : t.getOwner(),
+                safeName(nameOf(t.getOwner())),
+                player,
+                safeName(nameOf(player)),
+                System.currentTimeMillis()
+        ));
     }
 
     // =========================
@@ -858,7 +1254,6 @@ public final class SimpleTeamService implements TeamService {
             invites.clearTarget(m);
         }
 
-        // cooldown is keyed by inviter UUIDs; removing owner is the only meaningful cleanup here
         if (t.getOwner() != null) {
             inviteCooldownUntil.remove(t.getOwner());
         }
@@ -901,11 +1296,17 @@ public final class SimpleTeamService implements TeamService {
         if (!consumeDirty()) return;
 
         try {
+            // TeamStorage expects a TeamService; this class implements TeamService
             storage.saveAll(this);
         } catch (Exception e) {
             dirty.set(true);
             plugin.getLogger().severe("Failed to save teams: " + e.getClass().getSimpleName() + ": " + e.getMessage());
         }
+    }
+
+    private void publishTeamEvent(TeamEventPacket pkt) {
+        if (pkt == null) return;
+        plugin.publishTeamEvent(pkt);
     }
 
     private void ensureOwnerInMembers(Team t) {

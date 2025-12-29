@@ -23,7 +23,9 @@ import org.bukkit.entity.Player;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
-import java.util.*;
+import java.util.LinkedHashSet;
+import java.util.Locale;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 public final class AdminCommand implements CommandExecutor {
@@ -99,7 +101,6 @@ public final class AdminCommand implements CommandExecutor {
                         return true;
                     }
 
-                    // FIX: join args after subcommand (index 1), not index 0
                     String teamName = joinFrom(args, 1);
                     Team t = plugin.teams().getTeamByName(teamName).orElse(null);
                     if (t == null) {
@@ -108,7 +109,11 @@ public final class AdminCommand implements CommandExecutor {
                         return true;
                     }
 
+                    // ✅ This method already:
+                    // - broadcasts locally to team on this backend
+                    // - publishes TeamEventPacket.TEAM_DISBANDED for other backends
                     plugin.teams().adminDisbandTeam(t.getId());
+
                     sender.sendMessage(Msg.color(plugin.msg().prefix()
                             + "&aDisbanded team &c" + t.getName() + "&a."));
 
@@ -142,8 +147,6 @@ public final class AdminCommand implements CommandExecutor {
 
                     UUID newOwner = resolvePlayerUuidOnlineOrUuid(targetToken);
                     if (newOwner == null) {
-                        // If you want, swap this to your messages.yml key:
-                        // team_player_must_be_online_or_uuid
                         sender.sendMessage(Msg.color(plugin.msg().prefix()
                                 + "&cPlayer must be online or a UUID: &f" + targetToken));
                         return true;
@@ -185,6 +188,19 @@ public final class AdminCommand implements CommandExecutor {
                         return true;
                     }
 
+                    // ✅ Instant "target" feedback (direct message), if they're online here
+                    // We do this BEFORE removing them so we still have team context.
+                    Player onlineTarget = Bukkit.getPlayer(target);
+                    if (onlineTarget != null && onlineTarget.isOnline()) {
+                        plugin.msg().send(onlineTarget, "team_kick_target",
+                                "{team}", Msg.color(before.getName()),
+                                "{by}", sender.getName()
+                        );
+                    }
+
+                    // ✅ This method already:
+                    // - broadcasts to the team on this backend
+                    // - publishes TeamEventPacket.MEMBER_KICKED for other backends
                     plugin.teams().adminKickPlayer(target);
 
                     sender.sendMessage(Msg.color(plugin.msg().prefix()
@@ -203,7 +219,6 @@ public final class AdminCommand implements CommandExecutor {
                         return true;
                     }
 
-                    // FIX: join args after subcommand (index 1), not index 0
                     String teamName = joinFrom(args, 1);
                     Team t = plugin.teams().getTeamByName(teamName).orElse(null);
                     if (t == null) {

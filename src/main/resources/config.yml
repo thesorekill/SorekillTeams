@@ -71,7 +71,7 @@ storage:
 
     # Optional extra driver params appended internally to JDBC
     # Example: "serverTimezone=UTC&useUnicode=true&characterEncoding=utf8"
-    parameters: "sslmode=require"
+    parameters: "useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&useUnicode=true&characterEncoding=utf8"
 
     table_prefix: "st_"
 
@@ -125,6 +125,10 @@ redis:
   # Reconnect & timeouts
   timeout_ms: 5000
   reconnect_delay_ms: 2000
+
+  # Optional:
+  presence_ttl_seconds: 25
+  presence_heartbeat_period_ticks: 200
 
 # ----------------------------------------------------------------------------
 # Team Rules

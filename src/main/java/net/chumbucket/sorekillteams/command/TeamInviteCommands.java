@@ -15,6 +15,7 @@ import net.chumbucket.sorekillteams.model.Team;
 import net.chumbucket.sorekillteams.model.TeamInvite;
 import net.chumbucket.sorekillteams.util.Msg;
 import org.bukkit.Bukkit;
+import org.bukkit.OfflinePlayer;
 import org.bukkit.entity.Player;
 
 import java.util.*;
@@ -34,7 +35,7 @@ public final class TeamInviteCommands implements TeamSubcommandModule {
     public boolean handle(Player p, String sub, String[] args, boolean debug) {
         return switch (sub) {
             case "invite" -> handleInvite(p, args, debug);
-            case "invites" -> handleInvites(p);               // ✅ UPDATED
+            case "invites" -> handleInvites(p);
             case "accept" -> handleAccept(p, args, debug);
             case "deny" -> handleDeny(p, args, debug);
             default -> false;
@@ -55,41 +56,104 @@ public final class TeamInviteCommands implements TeamSubcommandModule {
             return true;
         }
 
-        Player target = Bukkit.getPlayerExact(args[1]);
-        if (target == null) {
-            plugin.msg().send(p, "team_invite_player_offline");
+        final String targetName = args[1].trim();
+        if (targetName.isEmpty()) {
+            plugin.msg().send(p, "team_invite_usage");
             return true;
         }
 
-        plugin.teams().invite(p.getUniqueId(), target.getUniqueId());
+        // Fast path: target is online on THIS backend
+        Player targetOnline = Bukkit.getPlayerExact(targetName);
+        if (targetOnline != null && targetOnline.isOnline()) {
+            doInvite(p, targetOnline.getUniqueId(), targetOnline.getName(), debug);
+            return true;
+        }
 
-        String teamName = plugin.teams().getTeamByPlayer(p.getUniqueId())
+        // Slow path: resolve OfflinePlayer UUID safely OFF the main thread.
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+            OfflinePlayer off = resolveOfflineByNameBestEffort(targetName);
+
+            // If we still can't resolve a UUID, treat as "offline/unknown"
+            if (off == null || off.getUniqueId() == null) {
+                Bukkit.getScheduler().runTask(plugin, () -> plugin.msg().send(p, "team_invite_player_offline"));
+                return;
+            }
+
+            UUID targetUuid = off.getUniqueId();
+            String resolvedName = (off.getName() != null && !off.getName().isBlank()) ? off.getName() : targetName;
+
+            Bukkit.getScheduler().runTask(plugin, () -> doInvite(p, targetUuid, resolvedName, debug));
+        });
+
+        return true;
+    }
+
+    private void doInvite(Player inviter, UUID inviteeUuid, String inviteeName, boolean debug) {
+        if (inviter == null || inviteeUuid == null) return;
+
+        // Service validation + invite creation (local)
+        plugin.teams().invite(inviter.getUniqueId(), inviteeUuid);
+
+        String teamName = plugin.teams().getTeamByPlayer(inviter.getUniqueId())
                 .map(Team::getName)
                 .orElse("Team");
 
-        plugin.msg().send(p, "team_invite_sent",
-                "{target}", target.getName(),
+        plugin.msg().send(inviter, "team_invite_sent",
+                "{target}", (inviteeName == null ? "player" : inviteeName),
                 "{team}", Msg.color(teamName)
         );
 
-        plugin.msg().send(target, "team_invite_received",
-                "{inviter}", p.getName(),
-                "{team}", Msg.color(teamName)
-        );
-
-        if (plugin.actionbar() != null) {
-            plugin.actionbar().send(target, "actionbar.team_invite_received",
-                    "{inviter}", p.getName(),
+        // If the invitee is online on THIS backend, show immediate message/actionbar.
+        Player inviteeOnlineHere = Bukkit.getPlayer(inviteeUuid);
+        if (inviteeOnlineHere != null && inviteeOnlineHere.isOnline()) {
+            plugin.msg().send(inviteeOnlineHere, "team_invite_received",
+                    "{inviter}", inviter.getName(),
                     "{team}", Msg.color(teamName)
             );
+
+            if (plugin.actionbar() != null) {
+                plugin.actionbar().send(inviteeOnlineHere, "actionbar.team_invite_received",
+                        "{inviter}", inviter.getName(),
+                        "{team}", Msg.color(teamName)
+                );
+            }
         }
 
         if (debug) {
-            plugin.getLogger().info("[TEAM-DBG] " + p.getName()
-                    + " invited " + target.getName()
+            plugin.getLogger().info("[TEAM-DBG] " + inviter.getName()
+                    + " invited " + (inviteeName == null ? inviteeUuid : inviteeName)
                     + " team=" + teamName);
         }
-        return true;
+    }
+
+    /**
+     * Best-effort offline lookup by name:
+     * - If Paper method exists at runtime: Bukkit#getOfflinePlayerIfCached(String)
+     * - Else fallback: Bukkit#getOfflinePlayer(String) (deprecated) BUT called async so it won't block main.
+     */
+    private OfflinePlayer resolveOfflineByNameBestEffort(String name) {
+        if (name == null || name.isBlank()) return null;
+
+        // Try Paper's cached lookup via reflection (doesn't exist on Spigot API)
+        try {
+            var m = Bukkit.class.getMethod("getOfflinePlayerIfCached", String.class);
+            Object o = m.invoke(null, name);
+            if (o instanceof OfflinePlayer op) {
+                // Paper returns null when not cached
+                if (op.getUniqueId() != null) return op;
+            }
+        } catch (Throwable ignored) {
+            // no-op (method not present or failed)
+        }
+
+        // Fallback (Spigot): deprecated, but safe enough when called async
+        try {
+            @SuppressWarnings("deprecation")
+            OfflinePlayer op = Bukkit.getOfflinePlayer(name);
+            return op;
+        } catch (Throwable t) {
+            return null;
+        }
     }
 
     // ---------------------------------------------------------------------
@@ -102,7 +166,7 @@ public final class TeamInviteCommands implements TeamSubcommandModule {
             return true;
         }
 
-        // ✅ GUI path
+        // GUI path
         if (plugin.menus() != null && plugin.menus().enabledInConfigYml()) {
             plugin.menus().open(p, "invites");
             return true;
@@ -234,12 +298,6 @@ public final class TeamInviteCommands implements TeamSubcommandModule {
     // Helpers
     // ---------------------------------------------------------------------
 
-    /**
-     * Resolves a GUI or user-supplied argument into a team UUID.
-     * Accepts either:
-     * - UUID (from GUI: {invite_team_id})
-     * - Team name (typed by player)
-     */
     private Optional<UUID> resolveInviteTeamId(UUID invitee, String rawArg) {
         if (invitee == null || rawArg == null) return Optional.empty();
 

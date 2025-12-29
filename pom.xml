@@ -38,6 +38,9 @@
     <!-- Libby (runtime dependency loader) -->
     <libby.version>1.3.1</libby.version>
 
+    <!-- ✅ Redis client (NOT shaded; downloaded at runtime via Libby) -->
+    <jedis.version>5.2.0</jedis.version>
+
     <!-- JDBC driver versions (NOT shaded; downloaded at runtime via Libby) -->
     <mysql.driver.version>9.1.0</mysql.driver.version>
     <mariadb.driver.version>3.5.0</mariadb.driver.version>
@@ -138,6 +141,23 @@
       <version>${libby.version}</version>
     </dependency>
 
+    <!-- ✅ Redis client (COMPILE-ONLY / NOT SHADED)
+         We compile against Jedis, but DO NOT ship it in the jar.
+         Load it at runtime with Libby exactly like your JDBC drivers. -->
+    <dependency>
+      <groupId>redis.clients</groupId>
+      <artifactId>jedis</artifactId>
+      <version>${jedis.version}</version>
+      <scope>provided</scope>
+      <exclusions>
+        <!-- keep your jar clean; server supplies logging, or you don't need it -->
+        <exclusion>
+          <groupId>org.slf4j</groupId>
+          <artifactId>slf4j-api</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+
     <!--
       IMPORTANT:
       JDBC drivers are intentionally NOT dependencies anymore.
@@ -147,6 +167,9 @@
       - postgresql: org.postgresql:postgresql:${postgres.driver.version}
       - sqlite:     org.xerial:sqlite-jdbc:${sqlite.driver.version}
       - h2:         com.h2database:h2:${h2.version}
+
+      ✅ Redis client is also intended to be runtime-loaded via Libby:
+      - jedis: redis.clients:jedis:${jedis.version}
     -->
 
   </dependencies>
