@@ -9,7 +9,31 @@ Designed for modern servers and future proxy networks, SorekillTeams focuses on 
 ## 🆕 Latest Release — 1.1.9
 
 ### Changelog
-- 
+**1.1.9 is a stability + networking-readiness release.**
+
+- ✅ Fully stabilized team homes system
+  - Warmups, cooldowns, and permission bypasses
+  - Reliable persistence across reloads and restarts
+- ✅ Network-aware home metadata
+  - Homes now store the originating server name
+  - Foundation for cross-server home routing
+- ✅ Redis-based event architecture (optional)
+  - Cross-server team events (joins, leaves, kicks, renames, ownership changes)
+  - Cross-server invite delivery
+  - Cross-server presence (online/offline) awareness
+- ✅ Menu system polish
+  - Live menu refresh when team state changes
+  - Correct handling of offline player skins
+  - Proper menu closing on kick/disband
+- ✅ SQL + YAML parity improvements
+  - Safe autosave handling
+  - Snapshot-based SQL refresh logic
+- ✅ Improved admin safety toggles
+- ✅ Internal cleanup and architecture hardening
+- ✅ Extensive config documentation and defaults cleanup
+
+> ⚠️ Cross-server features are **opt-in** and require SQL + Redis.  
+> Single-server setups work out of the box.
 
 ---
 
@@ -44,32 +68,23 @@ Server owners retain **full control** through permissions and a detailed configu
 - **Team homes**
   - Set and teleport to team homes
   - Warmups, cooldowns, and max-home limits
-  - Network-aware metadata for future proxy support
+  - Network-aware metadata for proxy environments
+- **GUI menu system**
+  - Team management menus
+  - Team browsing and member viewing
+  - Invite management
+  - Offline player heads with skin support
 - **Update checker**
   - Spigot history-based update detection
   - Optional in-game OP notifications
 - **Safe storage system**
+  - YAML or SQL storage
   - Autosave, atomic writes, and rolling backups
 - **Paper & Spigot compatible**
 - **Optional placeholder support**
   - PlaceholderAPI and MiniPlaceholders
 - **Lightweight and focused**
   - No economy, claims, or RPG systems
-
----
-
-## Menus (New)
-
-SorekillTeams includes a **built-in GUI menu system** for intuitive team interaction.
-
-- Inventory-based menus for team management
-- Team browsing and member viewing
-- Invite management and confirmations
-- Offline player heads with proper skin rendering
-- Permission- and context-aware actions
-- Fully configurable via `menus.yml`
-
-The menu system is designed to remain **lightweight and optional**, complementing command-based workflows rather than replacing them.
 
 ---
 
@@ -84,11 +99,52 @@ The menu system is designed to remain **lightweight and optional**, complementin
 
 ## Installation
 
-1. Download `SorekillTeams.jar`
+### 🔹 Single-Server Setup (Most Servers)
+
+This is the default and simplest setup.
+
+1. Download `SorekillTeams-1.1.9.jar`
 2. Place it in your server’s `plugins/` directory
 3. Start or restart the server
 4. Configure permissions (**LuckPerms recommended**)
-5. Adjust `config.yml` and `messages.yml` as needed
+5. Adjust `config.yml`, `messages.yml`, and `menus.yml` as needed
+
+**Notes:**
+- Uses YAML storage by default
+- Redis and proxy features are **not required**
+- Team homes work normally on this server only
+
+---
+
+### 🔹 Multi-Server / Proxy Setup (Advanced)
+
+Use this if you run **Velocity or BungeeCord** with multiple backend servers.
+
+**Requirements:**
+- Shared SQL database (MySQL, MariaDB, PostgreSQL, etc.)
+- Redis server for real-time sync
+- Proxy (Velocity or BungeeCord)
+
+**Steps:**
+1. Set `storage.type` to a SQL backend
+2. Enable Redis in `config.yml`
+3. Give each backend server a **unique**:
+   - `redis.server_id`
+4. Set `homes.server_name` to match the **proxy server name**
+   - ⚠️ This **must exactly match** the name used by the proxy
+5. Enable `homes.proxy_mode` if using cross-server home teleports
+6. Restart all backend servers
+
+**What you get:**
+- Network-wide team membership
+- Cross-server invites and chat
+- Team events synced instantly
+- Network-aware team homes (teleport routing ready)
+
+> SQL is the **source of truth**  
+> Redis is the **real-time notification layer**
+
+---
 
 Reload configs anytime with:
 '/sorekillteams reload'
@@ -111,83 +167,17 @@ Reload configs anytime with:
 | `/team kick` | `/team kick <player>` | Kick a member | `sorekillteams.kick` |
 | `/team transfer` | `/team transfer <player>` | Transfer ownership | `sorekillteams.transfer` |
 | `/team rename` | `/team rename <name>` | Rename your team | `sorekillteams.rename` |
-| `/team ff` | `/team ff <on\|off\|toggle>` | Toggle friendly fire | `sorekillteams.ff` |
+| `/team ff` | `/team ff <on|off|toggle>` | Toggle friendly fire | `sorekillteams.ff` |
 | `/tc` | `/tc [message]` | Team chat or toggle mode | `sorekillteams.teamchat` |
 | `/sorekillteams reload` | `/sorekillteams reload` | Reload configs/messages | `sorekillteams.admin.reload` |
 | `/sorekillteams version` | `/sorekillteams version` | Show plugin version | `sorekillteams.admin.version` |
 
 ---
 
-## Permissions
-
-### Wildcard (recommended for admins)
-
-| Permission | Description | Default |
-|------------|-------------|---------|
-| `sorekillteams.*` | Grants all SorekillTeams permissions | op |
-
----
-
-### Base
-
-| Permission | Description | Default |
-|------------|-------------|---------|
-| `sorekillteams.use` | Use `/team` | false |
-| `sorekillteams.teamchat` | Use team chat (`/tc`, toggle) | false |
-| `sorekillteams.chat` | Legacy alias for team chat | false |
-
----
-
-### Team Management
-
-| Permission | Description |
-|------------|-------------|
-| `sorekillteams.create` | Create teams |
-| `sorekillteams.invite` | Invite players |
-| `sorekillteams.invites` | View pending invites |
-| `sorekillteams.accept` | Accept invites |
-| `sorekillteams.deny` | Deny invites |
-| `sorekillteams.leave` | Leave team |
-| `sorekillteams.disband` | Disband team |
-| `sorekillteams.kick` | Kick members |
-| `sorekillteams.transfer` | Transfer ownership |
-| `sorekillteams.rename` | Rename team |
-| `sorekillteams.ff` | Toggle friendly fire |
-
----
-
-### Team Homes
-
-| Permission | Description |
-|------------|-------------|
-| `sorekillteams.homes` | View or list team homes |
-| `sorekillteams.home` | Teleport to a team home |
-| `sorekillteams.sethome` | Set a team home |
-| `sorekillteams.delhome` | Delete a team home |
-| `sorekillteams.home.bypasscooldown` | Bypass home cooldowns |
-
----
-
-### Admin
-
-| Permission | Description | Default |
-|------------|-------------|---------|
-| `sorekillteams.admin` | Admin command access | op |
-| `sorekillteams.admin.reload` | Reload configs/messages | op |
-| `sorekillteams.admin.version` | View plugin version | op |
-| `sorekillteams.admin.disband` | Force disband teams | op |
-| `sorekillteams.admin.setowner` | Force owner change | op |
-| `sorekillteams.admin.kick` | Force kick players | op |
-| `sorekillteams.admin.info` | View any team info | op |
-| `sorekillteams.spy` | Spy on team chat | op |
-| `sorekillteams.friendlyfire.bypass` | Bypass FF protection | op |
-
----
-
 ## Planned Features
 
-- Velocity and BungeeCord proxy support
-- Cross-server teams and homes
+- Full Velocity + BungeeCord proxy integration
+- Cross-server home teleport finalization
 - Team roles and permissions
 - Scoreboard and nametag modules
 
@@ -197,13 +187,6 @@ Reload configs anytime with:
 
 Licensed under the **Apache License, Version 2.0**  
 See `LICENSE` for details.
-
----
-
-## Contributing
-
-Bug reports, feature requests, and pull requests are welcome.  
-Please keep contributions focused and aligned with the plugin’s lightweight philosophy.
 
 ---
 
