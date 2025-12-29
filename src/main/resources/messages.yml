@@ -207,6 +207,9 @@ team_home_cancelled_move: "{prefix}&cTeleportation cancelled, you moved."
 team_home_world_missing: "{prefix}&cThat home’s world is missing/unloaded: &f{home}&c."
 team_home_wrong_server: "{prefix}&cThat home (&f{home}&c) is on server &f{server}&c."
 
+team_home_switching_server: "&7Sending you to &f{server}&7 to teleport to &b{home}&7..."
+team_home_proxy_unavailable: "&cCross-server homes are unavailable right now."
+
 # ----------------------------------------------------------------------------
 # Friendly Fire (Combat)
 # ----------------------------------------------------------------------------

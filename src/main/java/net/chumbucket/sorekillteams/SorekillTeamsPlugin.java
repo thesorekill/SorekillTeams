@@ -25,6 +25,7 @@ import net.chumbucket.sorekillteams.listener.TeamChatListener;
 import net.chumbucket.sorekillteams.listener.TeamOnlineStatusListener;
 import net.chumbucket.sorekillteams.menu.MenuRouter;
 import net.chumbucket.sorekillteams.model.Team;
+import net.chumbucket.sorekillteams.model.TeamHome;
 import net.chumbucket.sorekillteams.model.TeamInvites;
 import net.chumbucket.sorekillteams.network.InvitePacket;
 import net.chumbucket.sorekillteams.network.PresencePacket;
@@ -32,9 +33,11 @@ import net.chumbucket.sorekillteams.network.RedisInviteBus;
 import net.chumbucket.sorekillteams.network.RedisPresenceBus;
 import net.chumbucket.sorekillteams.network.RedisTeamChatBus;
 import net.chumbucket.sorekillteams.network.RedisTeamEventBus;
+import net.chumbucket.sorekillteams.network.RedisTeamHomeBus;
 import net.chumbucket.sorekillteams.network.TeamChatBus;
 import net.chumbucket.sorekillteams.network.TeamChatPacket;
 import net.chumbucket.sorekillteams.network.TeamEventPacket;
+import net.chumbucket.sorekillteams.network.TeamHomeTeleportPacket;
 import net.chumbucket.sorekillteams.placeholders.PlaceholderBridge;
 import net.chumbucket.sorekillteams.service.SimpleTeamHomeService;
 import net.chumbucket.sorekillteams.service.SimpleTeamService;
@@ -57,12 +60,20 @@ import net.chumbucket.sorekillteams.util.Debug;
 import net.chumbucket.sorekillteams.util.Menus;
 import net.chumbucket.sorekillteams.util.Msg;
 import org.bukkit.Bukkit;
+import org.bukkit.Location;
+import org.bukkit.Sound;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.PluginCommand;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.entity.Player;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
+import org.bukkit.event.Listener;
+import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 
+import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
 import java.io.File;
 import java.util.Collection;
 import java.util.Locale;
@@ -116,11 +127,14 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     private TeamChatBus teamChatBus;
     private RedisInviteBus inviteBus;
 
-    // ✅ Team event bus (leave/kick/disband/rename/transfer/join)
+    // ✅ Team event bus (leave/kick/disband/rename/transfer/join/home changes)
     private RedisTeamEventBus teamEventBus;
 
     // ✅ Presence bus (network-wide online/offline)
     private RedisPresenceBus presenceBus;
+
+    // ✅ Team home teleport bus (cross-server home routing)
+    private RedisTeamHomeBus teamHomeBus;
 
     private String networkServerName = "default";
 
@@ -147,6 +161,33 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         return Math.max(1000L, getConfig().getLong("redis.presence.swap_window_ms", 2500L));
     }
 
+    // =========================================================
+    // ✅ Proxy plugin messaging channels
+    // =========================================================
+    private static final String BUNGEE_CHANNEL = "BungeeCord";
+    private static final String VELOCITY_CHANNEL = "velocity:main";
+
+    // =========================================================
+    // ✅ Cross-server home teleports: pending request cache
+    // =========================================================
+    private static final Sound TELEPORT_SOUND = Sound.ENTITY_ENDERMAN_TELEPORT;
+    private final ConcurrentHashMap<UUID, PendingHomeTeleport> pendingHomeTeleports = new ConcurrentHashMap<>();
+
+    private static final class PendingHomeTeleport {
+        final TeamHomeTeleportPacket pkt;
+        final long storedAtMs;
+
+        PendingHomeTeleport(TeamHomeTeleportPacket pkt, long storedAtMs) {
+            this.pkt = pkt;
+            this.storedAtMs = storedAtMs;
+        }
+    }
+
+    private long pendingHomeTeleportTtlMs() {
+        // Enough time for proxy connect + backend join + chunk load
+        return Math.max(3000L, getConfig().getLong("homes.pending_ttl_ms", 20000L));
+    }
+
     @Override
     public void onEnable() {
         saveDefaultConfig();
@@ -162,6 +203,9 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         this.menuRouter = new MenuRouter(this);
 
         ensurePlaceholdersHooked();
+
+        // ✅ Register outgoing plugin messaging channels (safe even if proxy isn't there)
+        registerProxyPluginMessaging();
 
         // -------------------------
         // Storage boot
@@ -230,6 +274,9 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         getServer().getPluginManager().registerEvents(new MainMenuListener(this), this);
         getServer().getPluginManager().registerEvents(new CreateTeamFlowListener(this), this);
 
+        // ✅ pending home teleport consumption on join (cross-server home routing)
+        getServer().getPluginManager().registerEvents(new PendingHomeTeleportListener(), this);
+
         // -------------------------
         // Tasks
         // -------------------------
@@ -267,6 +314,8 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         stopRedisNetwork();
         stopSql();
 
+        pendingHomeTeleports.clear();
+
         getLogger().info("SorekillTeams disabled.");
     }
 
@@ -294,6 +343,9 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
         ensurePlaceholdersHooked();
 
+        // re-register channels (harmless)
+        registerProxyPluginMessaging();
+
         try {
             wireStorageFromConfig(false);
         } catch (Exception e) {
@@ -314,6 +366,9 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
         // reset dedupe state on reload to avoid “stuck” suppressions
         presenceState.clear();
+
+        // clear pending teleports on reload (safe)
+        pendingHomeTeleports.clear();
 
         syncHomesWiringFromConfig(false);
         loadHomesBestEffort("reload");
@@ -349,7 +404,68 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     }
 
     // =========================================================
-    // ✅ Redis network wiring (chat + invites + team events + presence)
+    // ✅ Proxy plugin messaging
+    // =========================================================
+
+    private void registerProxyPluginMessaging() {
+        try {
+            Bukkit.getMessenger().registerOutgoingPluginChannel(this, BUNGEE_CHANNEL);
+        } catch (Throwable ignored) {}
+        try {
+            Bukkit.getMessenger().registerOutgoingPluginChannel(this, VELOCITY_CHANNEL);
+        } catch (Throwable ignored) {}
+    }
+
+    /**
+     * Option B (no proxy plugin):
+     * Best-effort request to move the player to a target server via proxy plugin messaging.
+     *
+     * - Tries BungeeCord channel first (works on Bungee, and on Velocity if bungeecord plugin messages enabled)
+     * - Falls back to Velocity channel
+     *
+     * Returns true if we *attempted* to send the message without throwing.
+     */
+    public boolean requestServerSwitchBestEffort(Player player, String targetServer) {
+        if (player == null || !player.isOnline()) return false;
+        if (targetServer == null || targetServer.isBlank()) return false;
+
+        // Try BungeeCord message
+        if (sendProxyConnectMessage(player, BUNGEE_CHANNEL, targetServer)) return true;
+
+        // Try Velocity message
+        return sendProxyConnectMessage(player, VELOCITY_CHANNEL, targetServer);
+    }
+
+    /**
+     * Backwards compatibility with your earlier call site.
+     * If you already call connectPlayerToProxyServer elsewhere, keep it.
+     */
+    public void connectPlayerToProxyServer(Player player, String targetServer) {
+        boolean ok = requestServerSwitchBestEffort(player, targetServer);
+        if (!ok && player != null && player.isOnline()) {
+            // Optional message key, safe if your Msg returns "" on missing keys
+            msg().send(player, "team_home_proxy_unavailable");
+        }
+    }
+
+    private boolean sendProxyConnectMessage(Player player, String channel, String targetServer) {
+        try {
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            DataOutputStream out = new DataOutputStream(bos);
+
+            // Standard subchannel used by Bungee, and commonly supported on Velocity too
+            out.writeUTF("Connect");
+            out.writeUTF(targetServer);
+
+            player.sendPluginMessage(this, channel, bos.toByteArray());
+            return true;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    // =========================================================
+    // ✅ Redis network wiring (chat + invites + team events + presence + team homes)
     // =========================================================
 
     private void setupRedisNetwork() {
@@ -401,6 +517,15 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             this.presenceBus = null;
             getLogger().warning("Failed to start Redis presence bus: " + e.getClass().getSimpleName() + ": " + e.getMessage());
         }
+
+        // ✅ TeamHome bus (only useful when homes.proxy_mode=true)
+        try {
+            this.teamHomeBus = new RedisTeamHomeBus(this, sec, networkServerName);
+            this.teamHomeBus.start();
+        } catch (Exception e) {
+            this.teamHomeBus = null;
+            getLogger().warning("Failed to start Redis team home bus: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+        }
     }
 
     private void stopRedisNetwork() {
@@ -427,6 +552,12 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         if (pb != null) {
             try { pb.stop(); } catch (Exception ignored) {}
         }
+
+        RedisTeamHomeBus thb = this.teamHomeBus;
+        this.teamHomeBus = null;
+        if (thb != null) {
+            try { thb.stop(); } catch (Exception ignored) {}
+        }
     }
 
     /**
@@ -441,12 +572,21 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         boolean invitesOk = inviteBus != null && inviteBus.isRunning();
         boolean eventsOk = teamEventBus != null && teamEventBus.isRunning();
         boolean presenceOk = presenceBus != null && presenceBus.isRunning();
+        boolean homesOk = teamHomeBus != null && teamHomeBus.isRunning();
 
-        return chatOk || invitesOk || eventsOk || presenceOk;
+        return chatOk || invitesOk || eventsOk || presenceOk || homesOk;
     }
 
     public boolean isPresenceNetworkEnabled() {
         return presenceBus != null && presenceBus.isRunning();
+    }
+
+    public boolean isTeamHomeNetworkEnabled() {
+        return teamHomeBus != null && teamHomeBus.isRunning();
+    }
+
+    public RedisTeamHomeBus teamHomeBus() {
+        return teamHomeBus;
     }
 
     public String networkServerName() {
@@ -637,15 +777,14 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             applyRemoteTeamEventToLocalCache(pkt);
         } catch (Throwable ignored) {}
 
-        // ✅ NEW: homes events require homes snapshot refresh so menus render correct state
+        // ✅ Homes events require homes snapshot refresh so menus render correct state
         boolean isHomeEvent =
                 pkt.type() == TeamEventPacket.Type.HOME_SET
-                || pkt.type() == TeamEventPacket.Type.HOME_DELETED
-                || pkt.type() == TeamEventPacket.Type.HOME_CLEARED;
+                        || pkt.type() == TeamEventPacket.Type.HOME_DELETED
+                        || pkt.type() == TeamEventPacket.Type.HOME_CLEARED;
 
         if (isHomeEvent) {
             try {
-                // Your method already exists and is safe (you call it from menu_open)
                 loadHomesBestEffort("remote_team_event:" + pkt.type().name());
             } catch (Throwable ignored) {}
         }
@@ -718,8 +857,7 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
                 }
             }
 
-            // ✅ NEW: home events (no team-wide broadcast message by default)
-            // If you later add message keys, you can broadcast them here.
+            // ✅ Home events: no broadcast by default (menus still refresh)
             case HOME_SET, HOME_DELETED, HOME_CLEARED -> {
                 key = null;
                 pairs = null;
@@ -755,12 +893,9 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
                         case TEAM_DISBANDED -> {
                             menuRouter.closeTeamMenusForLocalViewers(teamId);
                         }
-
-                        // ✅ NEW: home events -> refresh menus so bed + homes list update immediately
                         case HOME_SET, HOME_DELETED, HOME_CLEARED -> {
                             menuRouter.refreshTeamMenusForLocalViewers(teamId);
                         }
-
                         default -> { /* no-op */ }
                     }
                 } catch (Throwable ignored) {}
@@ -782,28 +917,26 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         Team t = teams.getTeamById(pkt.teamId()).orElse(null);
         if (t == null) return;
 
-        // We only need menu correctness: mutate the Team object in memory.
         UUID target = pkt.targetUuid();
 
         switch (pkt.type()) {
             case MEMBER_JOINED -> {
-                if (target != null && !t.getMembers().contains(target)) {
+                if (target != null && t.getMembers() != null && !t.getMembers().contains(target)) {
                     t.getMembers().add(target);
                 }
             }
             case MEMBER_LEFT, MEMBER_KICKED -> {
-                if (target != null) {
+                if (target != null && t.getMembers() != null) {
                     t.getMembers().remove(target);
                 }
             }
             case OWNER_TRANSFERRED -> {
                 if (target != null) {
                     t.setOwner(target);
-                    if (!t.getMembers().contains(target)) t.getMembers().add(target);
+                    if (t.getMembers() != null && !t.getMembers().contains(target)) t.getMembers().add(target);
                 }
             }
             case TEAM_RENAMED -> {
-                // pkt.teamName() is the NEW name per your publisher comment
                 if (pkt.teamName() != null && !pkt.teamName().isBlank()) {
                     t.setName(pkt.teamName());
                 }
@@ -814,6 +947,8 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         }
 
         // Ensure owner is always present + de-dupe members (MenuTeams expects clean lists)
+        if (t.getMembers() == null) return;
+
         UUID owner = t.getOwner();
         if (owner != null && !t.getMembers().contains(owner)) {
             t.getMembers().add(owner);
@@ -1032,6 +1167,133 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
             viewer.sendMessage(Msg.color("&8[&cSPY&8] ") + msgOut);
             sent.add(vu);
+        }
+    }
+
+    // =========================================================
+    // ✅ Cross-server Team Home teleports (Redis + proxy connect)
+    // =========================================================
+
+    /**
+     * Called by RedisTeamHomeBus on the main thread after it receives a packet
+     * (and after it ignores self-origin).
+     *
+     * Behavior:
+     * - If this backend is the target server, store as "pending" for that player UUID.
+     * - When the player joins this backend (after proxy switch), consume and teleport them.
+     */
+    public void onRemoteTeamHomeTeleport(TeamHomeTeleportPacket pkt) {
+        if (pkt == null) return;
+
+        // Only accept if this backend is the target
+        String target = pkt.targetServer();
+        if (target == null || target.isBlank()) return;
+
+        if (!networkServerName.equalsIgnoreCase(target)) {
+            // If you prefer using homes.server_name instead of redis.server_id, you can swap to that,
+            // but with your current wiring commands use plugin.networkServerName().
+            return;
+        }
+
+        UUID pu = pkt.playerUuid();
+        if (pu == null) return;
+
+        // Store pending (overwrites older)
+        pendingHomeTeleports.put(pu, new PendingHomeTeleport(pkt, System.currentTimeMillis()));
+
+        // If player already online here (rare but possible), attempt immediately next tick
+        Player p = Bukkit.getPlayer(pu);
+        if (p != null && p.isOnline()) {
+            Bukkit.getScheduler().runTask(this, () -> tryConsumePendingHomeTeleport(p));
+        }
+    }
+
+    private void tryConsumePendingHomeTeleport(Player p) {
+        if (p == null || !p.isOnline()) return;
+
+        PendingHomeTeleport pending = pendingHomeTeleports.get(p.getUniqueId());
+        if (pending == null) return;
+
+        long now = System.currentTimeMillis();
+        if (now - pending.storedAtMs > pendingHomeTeleportTtlMs()) {
+            pendingHomeTeleports.remove(p.getUniqueId());
+            return;
+        }
+
+        TeamHomeTeleportPacket pkt = pending.pkt;
+        if (pkt == null || pkt.teamId() == null) {
+            pendingHomeTeleports.remove(p.getUniqueId());
+            return;
+        }
+
+        // Best-effort ensure homes are loaded
+        try { loadHomesBestEffort("pending_home_teleport"); } catch (Throwable ignored) {}
+
+        TeamHomeService hs = this.teamHomes;
+        if (hs == null) {
+            pendingHomeTeleports.remove(p.getUniqueId());
+            msg().send(p, "team_home_proxy_unavailable");
+            return;
+        }
+
+        String key = pkt.homeKey();
+        if (key == null || key.isBlank()) {
+            pendingHomeTeleports.remove(p.getUniqueId());
+            msg().send(p, "team_home_not_found", "{home}", safe(pkt.homeDisplay(), "home"));
+            return;
+        }
+
+        TeamHome h = hs.getHome(pkt.teamId(), key).orElse(null);
+        if (h == null) {
+            pendingHomeTeleports.remove(p.getUniqueId());
+            msg().send(p, "team_home_not_found", "{home}", safe(pkt.homeDisplay(), key));
+            return;
+        }
+
+        Location dest = h.toLocationOrNull();
+        if (dest == null) {
+            pendingHomeTeleports.remove(p.getUniqueId());
+            msg().send(p, "team_home_world_missing", "{home}", safe(h.getDisplayName(), key));
+            return;
+        }
+
+        // Consume BEFORE teleport to avoid double-fire if join triggers multiple times
+        pendingHomeTeleports.remove(p.getUniqueId());
+
+        try {
+            p.teleport(dest);
+            p.playSound(p.getLocation(), TELEPORT_SOUND, 1.0f, 1.0f);
+
+            msg().send(p, "team_home_teleported", "{home}", safe(h.getDisplayName(), safe(h.getName(), "home")));
+        } catch (Throwable t) {
+            // If teleport fails, don’t re-add pending (avoid loops)
+        }
+    }
+
+    private final class PendingHomeTeleportListener implements Listener {
+
+        @EventHandler(priority = EventPriority.MONITOR)
+        public void onJoin(PlayerJoinEvent e) {
+            if (e == null) return;
+            Player p = e.getPlayer();
+            if (p == null) return;
+
+            // Delay a bit so worlds/chunks/plugins settle after proxy switch
+            Bukkit.getScheduler().runTaskLater(SorekillTeamsPlugin.this, () -> {
+                tryConsumePendingHomeTeleport(p);
+                // Periodic cleanup of stale entries
+                cleanupStalePendingHomeTeleports();
+            }, 10L);
+        }
+    }
+
+    private void cleanupStalePendingHomeTeleports() {
+        long now = System.currentTimeMillis();
+        long ttl = pendingHomeTeleportTtlMs();
+        for (var it = pendingHomeTeleports.entrySet().iterator(); it.hasNext(); ) {
+            var e = it.next();
+            PendingHomeTeleport p = e.getValue();
+            if (p == null || (now - p.storedAtMs) > ttl) it.remove();
         }
     }
 
@@ -1530,7 +1792,7 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             TeamHomeStorage hs = this.teamHomeStorage;
             TeamHomeService hv = this.teamHomes;
             if (hs != null && hv != null) {
-                if (hv instanceof net.chumbucket.sorekillteams.service.SimpleTeamHomeService shs) {
+                if (hv instanceof SimpleTeamHomeService shs) {
                     if (shs.isDirty()) {
                         hs.saveAll(hv);
                     }
@@ -1566,7 +1828,7 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             TeamHomeStorage hs = this.teamHomeStorage;
             TeamHomeService hv = this.teamHomes;
             if (hs != null && hv != null) {
-                if (hv instanceof net.chumbucket.sorekillteams.service.SimpleTeamHomeService shs) {
+                if (hv instanceof SimpleTeamHomeService shs) {
                     if (shs.isDirty()) {
                         hs.saveAll(hv);
                     }
