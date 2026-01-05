@@ -22,7 +22,7 @@ import redis.clients.jedis.HostAndPort;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPubSub;
 
-public final class RedisTeamEventBus {
+public final class RedisTeamEventBus implements TeamEventBus {
 
     private final SorekillTeamsPlugin plugin;
     private final String originServer;
@@ -57,6 +57,7 @@ public final class RedisTeamEventBus {
         this.channel = prefix + ":team_events";
     }
 
+    @Override
     public void start() {
         if (!running.compareAndSet(false, true)) return;
 
@@ -92,6 +93,7 @@ public final class RedisTeamEventBus {
         plugin.getLogger().info("TeamEventBus=Redis subscribed to '" + channel + "' as server='" + originServer + "'");
     }
 
+    @Override
     public void stop() {
         running.set(false);
         try { if (pubSub != null) pubSub.unsubscribe(); } catch (Exception ignored) {}
@@ -102,8 +104,10 @@ public final class RedisTeamEventBus {
         pubSub = null;
     }
 
+    @Override
     public boolean isRunning() { return running.get(); }
 
+    @Override
     public void publish(TeamEventPacket pkt) {
         if (pkt == null) return;
         if (!running.get()) return;

@@ -44,6 +44,14 @@ import java.util.UUID;
  * - %sorekillteams_home_list%              (comma separated display names)
  * - %sorekillteams_home_<name>%            (display name of a specific home key)
  *
+ * Added (team chat toggle):
+ * - %sorekillteams_teamchat_mode%          (Enabled/Disabled)
+ * - %sorekillteams_teamchat_enabled%       (true/false)
+ * 
+ * Added (invites toggle):
+ * - %sorekillteams_invites_mode%          (Enabled/Disabled)
+ * - %sorekillteams_invites_enabled%       (true/false)
+ *
  * Notes:
  * - home_<name> key is normalized like TeamHome: lowercase, trim, collapse spaces
  */
@@ -91,6 +99,26 @@ public final class SorekillTeamsExpansion extends PlaceholderExpansion {
             case "team_id" -> (team != null && team.getId() != null) ? team.getId().toString() : "";
             case "team_owner" -> (team != null && team.getOwner() != null) ? safeName(team.getOwner()) : "";
             case "team_members" -> (team != null) ? String.valueOf(uniqueMemberCount(team)) : "0";
+
+            // ✅ team chat toggle placeholders
+            case "teamchat_mode" -> {
+                boolean on = plugin.teams() != null && plugin.teams().isTeamChatEnabled(viewer);
+                yield on ? "Enabled" : "Disabled";
+            }
+            case "teamchat_enabled" -> {
+                boolean on = plugin.teams() != null && plugin.teams().isTeamChatEnabled(viewer);
+                yield on ? "true" : "false";
+            }
+
+            // ✅ invites toggle placeholders
+            case "invites_mode" -> {
+                boolean on = plugin.teams() != null && plugin.teams().isInvitesEnabled(viewer);
+                yield on ? "Enabled" : "Disabled";
+            }
+            case "invites_enabled" -> {
+                boolean on = plugin.teams() != null && plugin.teams().isInvitesEnabled(viewer);
+                yield on ? "true" : "false";
+            }
 
             // ---- counts ----
             case "members_total" -> (team != null) ? String.valueOf(uniqueMemberCount(team)) : "0";

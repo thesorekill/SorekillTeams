@@ -11,6 +11,7 @@
 package net.chumbucket.sorekillteams.command;
 
 import net.chumbucket.sorekillteams.SorekillTeamsPlugin;
+import net.chumbucket.sorekillteams.network.RedisTeamChatBus;
 import org.bukkit.entity.Player;
 
 import java.util.Locale;
@@ -40,8 +41,16 @@ public final class TeamChatCommands implements TeamSubcommandModule {
             return true;
         }
 
+        // /team chat   OR   /team tc
         if (args.length < 2) {
             boolean newState = plugin.teams().toggleTeamChat(p.getUniqueId());
+
+            // ✅ Persist toggle in Redis
+            final var bus = plugin.teamChatBus();
+            if (bus instanceof RedisTeamChatBus r) {
+                r.setTeamChatMode(p.getUniqueId(), newState);
+            }
+
             plugin.msg().send(p, newState ? "teamchat_on" : "teamchat_off");
 
             if (debug) {
@@ -54,18 +63,39 @@ public final class TeamChatCommands implements TeamSubcommandModule {
         switch (mode) {
             case "on", "enable", "enabled", "true" -> {
                 plugin.teams().setTeamChatEnabled(p.getUniqueId(), true);
+
+                // ✅ Persist toggle in Redis
+                final var bus = plugin.teamChatBus();
+                if (bus instanceof RedisTeamChatBus r) {
+                    r.setTeamChatMode(p.getUniqueId(), true);
+                }
+
                 plugin.msg().send(p, "teamchat_on");
                 if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " teamchat -> ON");
                 return true;
             }
             case "off", "disable", "disabled", "false" -> {
                 plugin.teams().setTeamChatEnabled(p.getUniqueId(), false);
+
+                // ✅ Persist toggle in Redis
+                final var bus = plugin.teamChatBus();
+                if (bus instanceof RedisTeamChatBus r) {
+                    r.setTeamChatMode(p.getUniqueId(), false);
+                }
+
                 plugin.msg().send(p, "teamchat_off");
                 if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " teamchat -> OFF");
                 return true;
             }
             case "toggle" -> {
                 boolean newState = plugin.teams().toggleTeamChat(p.getUniqueId());
+
+                // ✅ Persist toggle in Redis
+                final var bus = plugin.teamChatBus();
+                if (bus instanceof RedisTeamChatBus r) {
+                    r.setTeamChatMode(p.getUniqueId(), newState);
+                }
+
                 plugin.msg().send(p, newState ? "teamchat_on" : "teamchat_off");
                 if (debug) plugin.getLogger().info("[TEAM-DBG] " + p.getName() + " teamchat toggle -> " + (newState ? "ON" : "OFF"));
                 return true;

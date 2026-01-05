@@ -12,7 +12,7 @@ import redis.clients.jedis.HostAndPort;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPubSub;
 
-public final class RedisTeamHomeBus {
+public final class RedisTeamHomeBus implements TeamHomeBus {
 
     private final SorekillTeamsPlugin plugin;
     private final String originServer;
@@ -47,6 +47,7 @@ public final class RedisTeamHomeBus {
         this.channel = prefix + ":teamhome";
     }
 
+    @Override
     public void start() {
         if (!running.compareAndSet(false, true)) return;
 
@@ -59,7 +60,6 @@ public final class RedisTeamHomeBus {
                 TeamHomeTeleportPacket pkt = TeamHomeTeleportPacket.decode(message);
                 if (pkt == null) return;
 
-                // ignore our own publishes
                 if (originServer.equalsIgnoreCase(pkt.originServer())) return;
 
                 Bukkit.getScheduler().runTask(plugin, () -> plugin.onRemoteTeamHomeTeleport(pkt));
@@ -83,6 +83,7 @@ public final class RedisTeamHomeBus {
         plugin.getLogger().info("TeamHomeBus=Redis subscribed to '" + channel + "' as server='" + originServer + "'");
     }
 
+    @Override
     public void stop() {
         running.set(false);
         try { if (pubSub != null) pubSub.unsubscribe(); } catch (Exception ignored) {}
@@ -93,8 +94,10 @@ public final class RedisTeamHomeBus {
         pubSub = null;
     }
 
+    @Override
     public boolean isRunning() { return running.get(); }
 
+    @Override
     public void publish(TeamHomeTeleportPacket pkt) {
         if (pkt == null) return;
         if (!running.get()) return;

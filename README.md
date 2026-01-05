@@ -6,31 +6,12 @@ Designed for modern servers and future proxy networks, SorekillTeams focuses on 
 
 ---
 
-## 🆕 Latest Release — 1.1.9
+## 🆕 Latest Release — 1.2.0
 
 ### Changelog
-**1.1.9 is a stability + networking-readiness release.**
 
-- ✅ Fully stabilized team homes system
-  - Warmups, cooldowns, and permission bypasses
-  - Reliable persistence across reloads and restarts
-- ✅ Network-aware home metadata
-  - Homes now store the originating server name
-  - Foundation for cross-server home routing
-- ✅ Redis-based event architecture (optional)
-  - Cross-server team events (joins, leaves, kicks, renames, ownership changes)
-  - Cross-server invite delivery
-  - Cross-server presence (online/offline) awareness
-- ✅ Menu system polish
-  - Live menu refresh when team state changes
-  - Correct handling of offline player skins
-  - Proper menu closing on kick/disband
-- ✅ SQL + YAML parity improvements
-  - Safe autosave handling
-  - Snapshot-based SQL refresh logic
-- ✅ Improved admin safety toggles
-- ✅ Internal cleanup and architecture hardening
-- ✅ Extensive config documentation and defaults cleanup
+- Team chat toggle persists between servers
+- Team invites can be toggled
 
 > ⚠️ Cross-server features are **opt-in** and require SQL + Redis.  
 > Single-server setups work out of the box.
@@ -218,6 +199,7 @@ Reload configs anytime with:
 | `sorekillteams.create` | Create teams |
 | `sorekillteams.invite` | Invite players |
 | `sorekillteams.invites` | View pending invites |
+| `sorekillteams.invitetoggle` | Toggle invites |
 | `sorekillteams.accept` | Accept invites |
 | `sorekillteams.deny` | Deny invites |
 | `sorekillteams.leave` | Leave team |
@@ -260,7 +242,6 @@ Reload configs anytime with:
 ## Planned Features
 
 - Team roles and internal permissions
-- Scoreboard and nametag modules
 
 Suggestions are appreciated!
 

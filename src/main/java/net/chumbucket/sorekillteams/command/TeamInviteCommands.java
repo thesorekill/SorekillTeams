@@ -35,7 +35,8 @@ public final class TeamInviteCommands implements TeamSubcommandModule {
     public boolean handle(Player p, String sub, String[] args, boolean debug) {
         return switch (sub) {
             case "invite" -> handleInvite(p, args, debug);
-            case "invites" -> handleInvites(p);
+            case "invites" -> handleInvitesOrToggle(p, args);
+            case "invitetoggle" -> handleInviteToggle(p);
             case "accept" -> handleAccept(p, args, debug);
             case "deny" -> handleDeny(p, args, debug);
             default -> false;
@@ -91,8 +92,24 @@ public final class TeamInviteCommands implements TeamSubcommandModule {
     private void doInvite(Player inviter, UUID inviteeUuid, String inviteeName, boolean debug) {
         if (inviter == null || inviteeUuid == null) return;
 
+        if (!plugin.teams().isInvitesEnabled(inviteeUuid)) {
+            plugin.msg().send(inviter, "team_invite_target_disabled",
+                    "{target}", (inviteeName == null ? "player" : inviteeName));
+            return;
+        }
         // Service validation + invite creation (local)
-        plugin.teams().invite(inviter.getUniqueId(), inviteeUuid);
+        try {
+            plugin.teams().invite(inviter.getUniqueId(), inviteeUuid);
+        } catch (net.chumbucket.sorekillteams.service.TeamServiceException e) {
+            String key = e.messageKey();
+            if (key != null) {
+                plugin.msg().send(inviter, key, e.pairs());
+            } else {
+                // generic fallback (pick a key you actually have in messages.yml)
+                plugin.msg().send(inviter, "team_error");
+            }
+            return;
+        }
 
         String teamName = plugin.teams().getTeamByPlayer(inviter.getUniqueId())
                 .map(Team::getName)
@@ -124,6 +141,30 @@ public final class TeamInviteCommands implements TeamSubcommandModule {
                     + " invited " + (inviteeName == null ? inviteeUuid : inviteeName)
                     + " team=" + teamName);
         }
+    }
+
+    private boolean handleInvitesOrToggle(Player p, String[] args) {
+        // /team invites toggle
+        if (args.length >= 2 && args[1].equalsIgnoreCase("toggle")) {
+            return handleInviteToggle(p);
+        }
+        return handleInvites(p);
+    }
+
+    private boolean handleInviteToggle(Player p) {
+        if (!p.hasPermission("sorekillteams.invitetoggle")) {
+            plugin.msg().send(p, "no_permission");
+            return true;
+        }
+
+        boolean enabledNow = plugin.teams().toggleInvites(p.getUniqueId());
+
+        if (enabledNow) {
+            plugin.msg().send(p, "team_invites_enabled");
+        } else {
+            plugin.msg().send(p, "team_invites_disabled");
+        }
+        return true;
     }
 
     /**

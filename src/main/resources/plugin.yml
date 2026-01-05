@@ -71,6 +71,7 @@ permissions:
       sorekillteams.transfer: true
       sorekillteams.rename: true
       sorekillteams.ff: true
+      sorekillteams.invitetoggle: true
 
       # Chat + spy
       sorekillteams.teamchat: true
@@ -131,6 +132,10 @@ permissions:
 
   sorekillteams.invites:
     description: View your pending team invites
+    default: false
+
+  sorekillteams.invitetoggle:
+    description: Toggle invites
     default: false
 
   sorekillteams.accept:

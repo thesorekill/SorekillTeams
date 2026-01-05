@@ -162,6 +162,9 @@ team_invite_already_pending: "{prefix}&cThat player already has a pending invite
 team_invite_no_match: "{prefix}&cNo invite matched that team. Use /team invites."
 team_multiple_invites_hint: "{prefix}&7You have multiple invites. Use /team invites then /team accept <team>."
 
+team_invites_enabled: "{prefix}&7Team Invites: &a&lON"
+team_invites_disabled: "{prefix}&7Team Invites: &c&lOFF"
+team_invite_target_disabled: "{prefix}&c{target} has team invites disabled."
 # ----------------------------------------------------------------------------
 # Team Chat
 # ----------------------------------------------------------------------------

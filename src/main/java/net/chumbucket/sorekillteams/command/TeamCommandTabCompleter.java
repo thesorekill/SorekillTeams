@@ -163,6 +163,7 @@ public final class TeamCommandTabCompleter implements TabCompleter {
         if (p.hasPermission("sorekillteams.invite")) subs.add("invite");
 
         if (p.hasPermission("sorekillteams.invites")) subs.add("invites");
+        if (p.hasPermission("sorekillteams.invitetoggle")) subs.add("invitetoggle");
 
         if (p.hasPermission("sorekillteams.accept")) subs.add("accept");
         if (p.hasPermission("sorekillteams.deny")) subs.add("deny");

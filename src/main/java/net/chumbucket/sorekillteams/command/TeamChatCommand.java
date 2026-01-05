@@ -11,6 +11,7 @@
 package net.chumbucket.sorekillteams.command;
 
 import net.chumbucket.sorekillteams.SorekillTeamsPlugin;
+import net.chumbucket.sorekillteams.network.RedisTeamChatBus;
 import net.chumbucket.sorekillteams.service.TeamServiceException;
 import net.chumbucket.sorekillteams.util.CommandErrors;
 import org.bukkit.command.Command;
@@ -83,6 +84,12 @@ public final class TeamChatCommand implements CommandExecutor {
             }
 
             final boolean nowOn = plugin.teams().toggleTeamChat(p.getUniqueId());
+
+            // ✅ Persist toggle in Redis (for cross-server swaps)
+            final var bus = plugin.teamChatBus();
+            if (bus instanceof RedisTeamChatBus r) {
+                r.setTeamChatMode(p.getUniqueId(), nowOn);
+            }
 
             if (debug) {
                 plugin.getLogger().info("[TC-DBG] " + p.getName() + " toggled -> " + (nowOn ? "ON" : "OFF"));
