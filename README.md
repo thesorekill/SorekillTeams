@@ -6,12 +6,11 @@ Designed for modern servers and future proxy networks, SorekillTeams focuses on 
 
 ---
 
-## 🆕 Latest Release — 1.2.0
+## 🆕 Latest Release — 1.2.1
 
 ### Changelog
 
-- Team chat toggle persists between servers
-- Team invites can be toggled
+- 
 
 > ⚠️ Cross-server features are **opt-in** and require SQL + Redis.  
 > Single-server setups work out of the box.
