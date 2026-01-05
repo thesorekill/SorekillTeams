@@ -23,6 +23,7 @@ import net.chumbucket.sorekillteams.listener.MainMenuListener;
 import net.chumbucket.sorekillteams.listener.SqlBackfillJoinListener;
 import net.chumbucket.sorekillteams.listener.TeamChatListener;
 import net.chumbucket.sorekillteams.listener.TeamOnlineStatusListener;
+import net.chumbucket.sorekillteams.listener.TeamChatModeJoinListener;
 import net.chumbucket.sorekillteams.menu.MenuRouter;
 import net.chumbucket.sorekillteams.model.Team;
 import net.chumbucket.sorekillteams.model.TeamHome;
@@ -273,6 +274,7 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         getServer().getPluginManager().registerEvents(new SqlBackfillJoinListener(this), this);
         getServer().getPluginManager().registerEvents(new MainMenuListener(this), this);
         getServer().getPluginManager().registerEvents(new CreateTeamFlowListener(this), this);
+        getServer().getPluginManager().registerEvents(new TeamChatModeJoinListener(this), this);
 
         // ✅ pending home teleport consumption on join (cross-server home routing)
         getServer().getPluginManager().registerEvents(new PendingHomeTeleportListener(), this);
@@ -1895,6 +1897,8 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     public TeamHomeStorage teamHomeStorage() { return teamHomeStorage; }
 
     public RedisPresenceBus presenceBus() { return presenceBus; }
+
+    public TeamChatBus teamChatBus() { return teamChatBus; }
 
     public boolean isFriendlyFireToggleEnabled() {
         return getConfig().getBoolean("friendly_fire.toggle_enabled", true);

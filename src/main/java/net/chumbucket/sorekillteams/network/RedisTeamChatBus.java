@@ -15,6 +15,7 @@ import org.bukkit.Bukkit;
 import org.bukkit.configuration.ConfigurationSection;
 
 import java.util.Objects;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import redis.clients.jedis.DefaultJedisClientConfig;
@@ -27,6 +28,10 @@ public final class RedisTeamChatBus implements TeamChatBus {
     private final SorekillTeamsPlugin plugin;
     private final String originServer;
     private final String channel;
+
+    // ✅ KV persistence for toggle mode
+    private final String modeKeyPrefix;
+    private final int modeTtlSeconds;
 
     private final String host;
     private final int port;
@@ -55,6 +60,11 @@ public final class RedisTeamChatBus implements TeamChatBus {
         String prefix = sec.getString("channel_prefix", "sorekillteams");
         if (prefix == null || prefix.isBlank()) prefix = "sorekillteams";
         this.channel = prefix + ":teamchat";
+
+        // ✅ Toggle mode KV key prefix + TTL
+        this.modeKeyPrefix = prefix + ":teamchat:mode:";
+        // default 30 days, 0 = never expire
+        this.modeTtlSeconds = Math.max(0, sec.getInt("teamchat_mode_ttl_seconds", 60 * 60 * 24 * 30));
     }
 
     @Override
@@ -141,6 +151,48 @@ public final class RedisTeamChatBus implements TeamChatBus {
                 // quiet: local send already happened
             }
         });
+    }
+
+    // ------------------------------------------------------------------------
+    // ✅ TeamChat toggle persistence (KV)
+    // ------------------------------------------------------------------------
+
+    public void setTeamChatMode(UUID playerUuid, boolean enabled) {
+        if (playerUuid == null) return;
+
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+            try (Jedis jedis = newJedis()) {
+                final String key = modeKeyPrefix + playerUuid;
+                final String val = enabled ? "1" : "0";
+
+                if (modeTtlSeconds > 0) {
+                    jedis.setex(key, modeTtlSeconds, val);
+                } else {
+                    jedis.set(key, val);
+                }
+            } catch (Throwable ignored) {
+            }
+        });
+    }
+
+    /**
+     * @return Boolean.TRUE/FALSE if stored, otherwise null if no preference stored (use default_on_join).
+     */
+    public Boolean getTeamChatMode(UUID playerUuid) {
+        if (playerUuid == null) return null;
+
+        try (Jedis jedis = newJedis()) {
+            final String v = jedis.get(modeKeyPrefix + playerUuid);
+            if (v == null) return null;
+
+            final String s = v.trim();
+            if (s.equals("1") || s.equalsIgnoreCase("true") || s.equalsIgnoreCase("on")) return Boolean.TRUE;
+            if (s.equals("0") || s.equalsIgnoreCase("false") || s.equalsIgnoreCase("off")) return Boolean.FALSE;
+
+            return null;
+        } catch (Throwable ignored) {
+            return null;
+        }
     }
 
     private Jedis newJedis() {
