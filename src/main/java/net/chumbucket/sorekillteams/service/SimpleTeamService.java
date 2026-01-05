@@ -51,6 +51,9 @@ public final class SimpleTeamService implements TeamService {
     // ✅ Only write to storage when THIS backend actually changed something
     private final AtomicBoolean dirty = new AtomicBoolean(false);
 
+    //Invite Toggle
+    private final Set<UUID> invitesDisabled = ConcurrentHashMap.newKeySet();
+
     public SimpleTeamService(SorekillTeamsPlugin plugin, TeamStorage storage) {
         this.plugin = Objects.requireNonNull(plugin, "plugin");
         this.storage = Objects.requireNonNull(storage, "storage");
@@ -83,6 +86,7 @@ public final class SimpleTeamService implements TeamService {
         playerToTeam.remove(playerUuid);
         teamChatToggled.remove(playerUuid);
         invites.clearTarget(playerUuid);
+        invitesDisabled.remove(playerUuid);
     }
 
     public void evictCachedTeam(UUID teamId) {
@@ -305,6 +309,7 @@ public final class SimpleTeamService implements TeamService {
         playerToTeam.remove(player);
         teamChatToggled.remove(player);
         invites.clearTarget(player);
+        invitesDisabled.remove(player);
 
         markDirty();
         safeSave();
@@ -366,6 +371,9 @@ public final class SimpleTeamService implements TeamService {
         }
         if (playerToTeam.containsKey(invitee)) {
             throw new TeamServiceException(TeamError.INVITEE_IN_TEAM, "team_invitee_in_team");
+        }
+        if (!isInvitesEnabled(invitee)) {
+            throw new TeamServiceException(TeamError.INVITES_DISABLED, "team_invite_target_disabled");
         }
 
         long now = System.currentTimeMillis();
@@ -789,6 +797,49 @@ public final class SimpleTeamService implements TeamService {
     }
 
     @Override
+    public boolean isInvitesEnabled(UUID player) {
+        return player != null && !invitesDisabled.contains(player);
+    }
+
+    @Override
+    public void setInvitesEnabled(UUID player, boolean enabled) {
+        if (player == null) return;
+        if (enabled) invitesDisabled.remove(player);
+        else invitesDisabled.add(player);
+        // ✅ no publish here
+    }
+
+    public void applyInvitesDisabledSnapshot(Collection<UUID> disabled) {
+        invitesDisabled.clear();
+        if (disabled == null) return;
+        for (UUID u : disabled) {
+            if (u != null) invitesDisabled.add(u);
+        }
+    }
+
+    public void applyRemoteInvitesEnabled(UUID player, boolean enabled) {
+        if (player == null) return;
+        if (enabled) invitesDisabled.remove(player);
+        else invitesDisabled.add(player);
+    }
+
+    @Override
+    public boolean toggleInvites(UUID player) {
+        if (player == null) return true;
+
+        boolean enabledNow;
+        if (invitesDisabled.remove(player)) {
+            enabledNow = true;   // now enabled
+        } else {
+            invitesDisabled.add(player);
+            enabledNow = false;  // now disabled
+        }
+
+        publishInviteToggle(player, enabledNow);
+        return enabledNow;
+    }
+
+    @Override
     public Collection<TeamInvite> getInvites(UUID invitee) {
         if (invitee == null) return List.of();
         long now = System.currentTimeMillis();
@@ -845,6 +896,7 @@ public final class SimpleTeamService implements TeamService {
         playerToTeam.remove(member);
         teamChatToggled.remove(member);
         invites.clearTarget(member);
+        invitesDisabled.remove(member);
 
         markDirty();
         safeSave();
@@ -1281,6 +1333,7 @@ public final class SimpleTeamService implements TeamService {
         playerToTeam.remove(player);
         teamChatToggled.remove(player);
         invites.clearTarget(player);
+        invitesDisabled.remove(player);
 
         markDirty();
         safeSave();
@@ -1332,6 +1385,7 @@ public final class SimpleTeamService implements TeamService {
             playerToTeam.remove(m);
             teamChatToggled.remove(m);
             invites.clearTarget(m);
+            invitesDisabled.remove(m);
         }
 
         if (t.getOwner() != null) {
@@ -1386,6 +1440,48 @@ public final class SimpleTeamService implements TeamService {
     private void publishTeamEvent(TeamEventPacket pkt) {
         if (pkt == null) return;
         plugin.publishTeamEvent(pkt);
+    }
+
+    private void publishInviteToggle(UUID player, boolean enabledNow) {
+        if (player == null) return;
+
+        // 1) PubSub event (sync other backends immediately)
+        plugin.publishInviteToggle(new net.chumbucket.sorekillteams.network.InviteTogglePacket(
+                plugin.networkServerName(),
+                player,
+                safeName(nameOf(player)),
+                enabledNow,
+                System.currentTimeMillis()
+        ));
+
+        // 2) Persist to Redis set (optional but strongly recommended)
+        if (!plugin.getConfig().getBoolean("redis.enabled", false)) return;
+
+        var sec = plugin.getConfig().getConfigurationSection("redis");
+        if (sec == null) return;
+
+        String prefix = sec.getString("channel_prefix", "sorekillteams");
+        if (prefix == null || prefix.isBlank()) prefix = "sorekillteams";
+        String key = prefix + ":invites_disabled";
+
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+            try (var jedis = new redis.clients.jedis.Jedis(
+                    new redis.clients.jedis.HostAndPort(
+                            sec.getString("host", "127.0.0.1"),
+                            Math.max(1, sec.getInt("port", 6379))
+                    ),
+                    redis.clients.jedis.DefaultJedisClientConfig.builder()
+                            .ssl(sec.getBoolean("use_ssl", false))
+                            .connectionTimeoutMillis(Math.max(1000, sec.getInt("timeout_ms", 5000)))
+                            .socketTimeoutMillis(Math.max(1000, sec.getInt("timeout_ms", 5000)))
+                            .user(sec.getString("username", ""))
+                            .password(sec.getString("password", ""))
+                            .build()
+            )) {
+                if (enabledNow) jedis.srem(key, player.toString());
+                else jedis.sadd(key, player.toString());
+            } catch (Throwable ignored) {}
+        });
     }
 
     private void ensureOwnerInMembers(Team t) {

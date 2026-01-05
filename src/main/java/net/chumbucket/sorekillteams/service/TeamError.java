@@ -41,6 +41,7 @@ public enum TeamError {
     MULTIPLE_INVITES,
     INVITE_EXPIRED,
     INVITE_COOLDOWN,
+    INVITES_DISABLED,
 
     // Capacity / leaving
     TEAM_FULL,

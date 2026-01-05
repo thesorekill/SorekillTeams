@@ -362,13 +362,13 @@ admin:
 # ---------------------------------------------------------------------------
 # Core team placeholders
 # ---------------------------------------------------------------------------
-# sorekillteams_team
+# %sorekillteams_team%
 #   -> Team name (blank if player is not in a team)
 #
-# sorekillteams_team_id
+# %sorekillteams_team_id%
 #   -> Team UUID (blank if not in a team)
 #
-# sorekillteams_in_team
+# %sorekillteams_in_team%
 #   -> "true" or "false"
 #
 # sorekillteams_team_owner
@@ -378,15 +378,33 @@ admin:
 #   -> Total members (owner + members)
 #
 # ---------------------------------------------------------------------------
+# Team chat toggle
+# ---------------------------------------------------------------------------
+# %sorekillteams_teamchat_mode%
+#  -> "Enabled" or "Disabled"
+#
+# %sorekillteams_teamchat_enabled%
+#  -> "true" or "false"
+#
+# ---------------------------------------------------------------------------
+# Invites toggle
+# ---------------------------------------------------------------------------
+# %sorekillteams_invites_mode%
+#  -> "Enabled" or "Disabled"
+#
+# %sorekillteams_invites_enabled%
+#  -> "true" or "false"
+#
+# ---------------------------------------------------------------------------
 # Member count placeholders (numbers only)
 # ---------------------------------------------------------------------------
-# sorekillteams_members_total
+# %sorekillteams_members_total%
 #   -> Total members (owner + members)
 #
-# sorekillteams_members_online
+# %sorekillteams_members_online%
 #   -> Number of online team members
 #
-# sorekillteams_members_offline
+# %sorekillteams_members_offline%
 #   -> Number of offline team members
 #
 # ---------------------------------------------------------------------------
@@ -395,11 +413,11 @@ admin:
 # sorekillteams_homes_count
 #   -> Number of homes the team has
 #
-# sorekillteams_home_1
-# sorekillteams_home_2
-# sorekillteams_home_3
-# sorekillteams_home_4
-# sorekillteams_home_5
+# %sorekillteams_home_1%
+# %sorekillteams_home_2%
+# %sorekillteams_home_3%
+# %sorekillteams_home_4%
+# %sorekillteams_home_5%
 #   -> Display name of the Nth team home (blank if missing)
 #
 # Notes:

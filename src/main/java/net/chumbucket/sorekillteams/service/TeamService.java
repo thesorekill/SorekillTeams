@@ -90,4 +90,10 @@ public interface TeamService {
 
     /** Force-kick a player from their team. If they are the owner, disbands the team. */
     void adminKickPlayer(UUID player);
+
+    boolean isInvitesEnabled(UUID player);
+
+    void setInvitesEnabled(UUID player, boolean enabled);
+
+    boolean toggleInvites(UUID player);
 }

@@ -199,6 +199,7 @@ Reload configs anytime with:
 | `sorekillteams.create` | Create teams |
 | `sorekillteams.invite` | Invite players |
 | `sorekillteams.invites` | View pending invites |
+| `sorekillteams.invitetoggle` | Toggle invites |
 | `sorekillteams.accept` | Accept invites |
 | `sorekillteams.deny` | Deny invites |
 | `sorekillteams.leave` | Leave team |

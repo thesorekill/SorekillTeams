@@ -31,10 +31,14 @@ import net.chumbucket.sorekillteams.model.TeamInvites;
 import net.chumbucket.sorekillteams.network.InvitePacket;
 import net.chumbucket.sorekillteams.network.PresencePacket;
 import net.chumbucket.sorekillteams.network.RedisInviteBus;
+import net.chumbucket.sorekillteams.network.InviteBus;
 import net.chumbucket.sorekillteams.network.RedisPresenceBus;
 import net.chumbucket.sorekillteams.network.RedisTeamChatBus;
 import net.chumbucket.sorekillteams.network.RedisTeamEventBus;
 import net.chumbucket.sorekillteams.network.RedisTeamHomeBus;
+import net.chumbucket.sorekillteams.network.RedisInviteToggleSnapshot;
+import net.chumbucket.sorekillteams.network.TeamEventBus;
+import net.chumbucket.sorekillteams.network.TeamHomeBus;
 import net.chumbucket.sorekillteams.network.TeamChatBus;
 import net.chumbucket.sorekillteams.network.TeamChatPacket;
 import net.chumbucket.sorekillteams.network.TeamEventPacket;
@@ -126,16 +130,16 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
     // Cross-server buses (Redis Pub/Sub)
     // =========================================================
     private TeamChatBus teamChatBus;
-    private RedisInviteBus inviteBus;
+    private InviteBus inviteBus;
 
     // ✅ Team event bus (leave/kick/disband/rename/transfer/join/home changes)
-    private RedisTeamEventBus teamEventBus;
+    private TeamEventBus teamEventBus;
 
     // ✅ Presence bus (network-wide online/offline)
     private RedisPresenceBus presenceBus;
 
     // ✅ Team home teleport bus (cross-server home routing)
-    private RedisTeamHomeBus teamHomeBus;
+    private TeamHomeBus teamHomeBus;
 
     private String networkServerName = "default";
 
@@ -487,6 +491,7 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
         // ✅ MUST load jedis runtime libs BEFORE any Redis classes run
         loadRedisLibsIfNeeded(sec);
+        RedisInviteToggleSnapshot.loadAsync(this, sec);
 
         try {
             this.teamChatBus = new RedisTeamChatBus(this, sec, networkServerName);
@@ -537,13 +542,13 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             try { bus.stop(); } catch (Exception ignored) {}
         }
 
-        RedisInviteBus ib = this.inviteBus;
+        InviteBus ib = this.inviteBus;
         this.inviteBus = null;
         if (ib != null) {
             try { ib.stop(); } catch (Exception ignored) {}
         }
 
-        RedisTeamEventBus teb = this.teamEventBus;
+        TeamEventBus teb = this.teamEventBus;
         this.teamEventBus = null;
         if (teb != null) {
             try { teb.stop(); } catch (Exception ignored) {}
@@ -555,7 +560,7 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             try { pb.stop(); } catch (Exception ignored) {}
         }
 
-        RedisTeamHomeBus thb = this.teamHomeBus;
+        TeamHomeBus thb = this.teamHomeBus;
         this.teamHomeBus = null;
         if (thb != null) {
             try { thb.stop(); } catch (Exception ignored) {}
@@ -587,7 +592,7 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
         return teamHomeBus != null && teamHomeBus.isRunning();
     }
 
-    public RedisTeamHomeBus teamHomeBus() {
+    public TeamHomeBus teamHomeBus() {
         return teamHomeBus;
     }
 
@@ -604,14 +609,21 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
 
     public void publishInvite(InvitePacket packet) {
         if (packet == null) return;
-        RedisInviteBus bus = this.inviteBus;
+        InviteBus bus = this.inviteBus;
+        if (bus == null || !bus.isRunning()) return;
+        bus.publish(packet);
+    }
+
+    public void publishInviteToggle(net.chumbucket.sorekillteams.network.InviteTogglePacket packet) {
+        if (packet == null) return;
+        InviteBus bus = this.inviteBus;
         if (bus == null || !bus.isRunning()) return;
         bus.publish(packet);
     }
 
     public void publishTeamEvent(TeamEventPacket packet) {
         if (packet == null) return;
-        RedisTeamEventBus bus = this.teamEventBus;
+        TeamEventBus bus = this.teamEventBus;
         if (bus == null || !bus.isRunning()) return;
         bus.publish(packet);
     }
@@ -685,6 +697,24 @@ public final class SorekillTeamsPlugin extends JavaPlugin {
             case DENIED -> { }
             case EXPIRED -> { }
             case CANCELLED -> { }
+        }
+    }
+
+    public void onRemoteInviteToggle(net.chumbucket.sorekillteams.network.InviteTogglePacket pkt) {
+        if (pkt == null || pkt.playerUuid() == null || teams == null) return;
+
+        // ✅ Apply to local cache WITHOUT re-publishing (prevents PubSub loops)
+        if (teams instanceof net.chumbucket.sorekillteams.service.SimpleTeamService simple) {
+            simple.applyRemoteInvitesEnabled(pkt.playerUuid(), pkt.enabled());
+        } else {
+            // fallback: best effort (may not be loop-safe for other implementations)
+            teams.setInvitesEnabled(pkt.playerUuid(), pkt.enabled());
+        }
+
+        // Optional: only message if the player is online HERE
+        Player p = Bukkit.getPlayer(pkt.playerUuid());
+        if (p != null && p.isOnline()) {
+            msg().send(p, pkt.enabled() ? "team_invites_enabled" : "team_invites_disabled");
         }
     }
 

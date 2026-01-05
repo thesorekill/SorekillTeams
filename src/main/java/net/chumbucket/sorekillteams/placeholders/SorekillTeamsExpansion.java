@@ -47,6 +47,10 @@ import java.util.UUID;
  * Added (team chat toggle):
  * - %sorekillteams_teamchat_mode%          (Enabled/Disabled)
  * - %sorekillteams_teamchat_enabled%       (true/false)
+ * 
+ * Added (invites toggle):
+ * - %sorekillteams_invites_mode%          (Enabled/Disabled)
+ * - %sorekillteams_invites_enabled%       (true/false)
  *
  * Notes:
  * - home_<name> key is normalized like TeamHome: lowercase, trim, collapse spaces
@@ -103,6 +107,16 @@ public final class SorekillTeamsExpansion extends PlaceholderExpansion {
             }
             case "teamchat_enabled" -> {
                 boolean on = plugin.teams() != null && plugin.teams().isTeamChatEnabled(viewer);
+                yield on ? "true" : "false";
+            }
+
+            // ✅ invites toggle placeholders
+            case "invites_mode" -> {
+                boolean on = plugin.teams() != null && plugin.teams().isInvitesEnabled(viewer);
+                yield on ? "Enabled" : "Disabled";
+            }
+            case "invites_enabled" -> {
+                boolean on = plugin.teams() != null && plugin.teams().isInvitesEnabled(viewer);
                 yield on ? "true" : "false";
             }
 

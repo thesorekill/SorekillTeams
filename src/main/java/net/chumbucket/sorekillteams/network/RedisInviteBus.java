@@ -22,7 +22,7 @@ import redis.clients.jedis.HostAndPort;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPubSub;
 
-public final class RedisInviteBus {
+public final class RedisInviteBus implements InviteBus {
 
     private final SorekillTeamsPlugin plugin;
     private final String originServer;
@@ -57,6 +57,7 @@ public final class RedisInviteBus {
         this.channel = prefix + ":invites";
     }
 
+    @Override
     public void start() {
         if (!running.compareAndSet(false, true)) return;
 
@@ -65,6 +66,13 @@ public final class RedisInviteBus {
             public void onMessage(String ch, String message) {
                 if (!running.get()) return;
                 if (message == null || message.isBlank()) return;
+
+                InviteTogglePacket tp = InviteTogglePacket.decode(message);
+                if (tp != null) {
+                    if (originServer.equalsIgnoreCase(tp.originServer())) return;
+                    Bukkit.getScheduler().runTask(plugin, () -> plugin.onRemoteInviteToggle(tp));
+                    return;
+                }
 
                 InvitePacket pkt = InvitePacket.decode(message);
                 if (pkt == null) return;
@@ -91,6 +99,7 @@ public final class RedisInviteBus {
         plugin.getLogger().info("InviteBus=Redis subscribed to '" + channel + "' as server='" + originServer + "'");
     }
 
+    @Override
     public void stop() {
         running.set(false);
         try { if (pubSub != null) pubSub.unsubscribe(); } catch (Exception ignored) {}
@@ -101,9 +110,23 @@ public final class RedisInviteBus {
         pubSub = null;
     }
 
+    @Override
     public boolean isRunning() { return running.get(); }
 
+    @Override
     public void publish(InvitePacket pkt) {
+        if (pkt == null) return;
+        if (!running.get()) return;
+
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+            try (Jedis jedis = newJedis()) {
+                jedis.publish(channel, pkt.encode());
+            } catch (Throwable ignored) {}
+        });
+    }
+
+    @Override
+    public void publish(InviteTogglePacket pkt) {
         if (pkt == null) return;
         if (!running.get()) return;
 
